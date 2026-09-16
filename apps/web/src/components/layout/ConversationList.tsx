@@ -17,8 +17,8 @@ import { Avatar } from "@/components/ui/Avatar";
 interface Conversation {
   id: string;
   name: string;
-  preview: string;
-  time: string;
+  preview?: string;
+  time?: string;
   fallback: string;
   online?: boolean;
   unread?: number;
@@ -34,6 +34,8 @@ export interface ConversationListProps {
   unreadCounts: Record<string, number>;
   lastMessagePreviewByConversation: Record<string, string>;
   lastMessageTimeByConversation: Record<string, string>;
+  conversations: Conversation[];
+isLoading?: boolean;
 }
 
 
@@ -112,6 +114,8 @@ const conversations: Conversation[] = [
  * The selected conversation is controlled by the parent.
  */
 export function ConversationList({
+  conversations,
+  isLoading = false,
   selectedConversationId,
   onSelectConversation,
   unreadCounts,
@@ -141,7 +145,7 @@ export function ConversationList({
     return conversations.filter((conversation) =>
       conversation.name.toLowerCase().includes(query),
     );
-  }, [searchQuery]);
+    }, [conversations, searchQuery]);
 
   // ============================================================
 // SORT BY LATEST MESSAGE
@@ -264,12 +268,14 @@ const sortedConversations = [
         />
       </div>
 
-      {/* ======================================================
-       * CONVERSATION LIST
-       * ====================================================== */}
-
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {filteredConversations.length === 0 ? (
+  {isLoading ? (
+    <div className="px-3 py-8 text-center">
+      <p className="text-sm text-[var(--text-muted)]">
+        Loading conversations...
+      </p>
+    </div>
+  ) : filteredConversations.length === 0 ? (
           /* --------------------------------------------------
            * EMPTY SEARCH STATE
            * -------------------------------------------------- */
