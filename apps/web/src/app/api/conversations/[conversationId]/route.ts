@@ -1,3 +1,4 @@
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
 /**
@@ -246,7 +247,7 @@ export async function GET(
  * PATCH /api/conversations/[conversationId]
  * ============================================================
  *
- * Update conversation name.
+ * Update conversation name in Supabase.
  */
 export async function PATCH(
   request: Request,
@@ -256,24 +257,7 @@ export async function PATCH(
 
   /**
    * ----------------------------------------------------------
-   * 1. Find conversation
-   * ----------------------------------------------------------
-   */
-  const conversation = conversations[conversationId];
-
-  if (!conversation) {
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Conversation not found",
-      },
-      { status: 404 },
-    );
-  }
-
-  /**
-   * ----------------------------------------------------------
-   * 2. Read request body
+   * 1. Read request body
    * ----------------------------------------------------------
    */
   const body = await request.json();
@@ -285,7 +269,7 @@ export async function PATCH(
 
   /**
    * ----------------------------------------------------------
-   * 3. Validate name
+   * 2. Validate name
    * ----------------------------------------------------------
    */
   if (!name) {
@@ -300,22 +284,59 @@ export async function PATCH(
 
   /**
    * ----------------------------------------------------------
-   * 4. Update conversation
+   * 3. Create Supabase admin client
    * ----------------------------------------------------------
    */
-  conversation.name = name;
-  conversation.fallback = name.charAt(0).toUpperCase();
+  const supabase = createSupabaseAdminClient();
 
   /**
    * ----------------------------------------------------------
-   * 5. Return updated conversation
+   * 4. Update conversation
+   * ----------------------------------------------------------
+   */
+  const { data, error } = await supabase
+    .from("conversations")
+    .update({
+      name,
+      fallback: name.charAt(0).toUpperCase(),
+    })
+    .eq("id", conversationId)
+    .select(
+      "id, name, fallback, online, created_at, updated_at",
+    )
+    .single();
+
+  /**
+   * ----------------------------------------------------------
+   * 5. Handle database error
+   * ----------------------------------------------------------
+   */
+  if (error) {
+    console.error(
+      "Failed to update conversation:",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to update conversation",
+      },
+      { status: 500 },
+    );
+  }
+
+  /**
+   * ----------------------------------------------------------
+   * 6. Return updated conversation
    * ----------------------------------------------------------
    */
   return NextResponse.json({
     success: true,
-    data: conversation,
+    data,
   });
 }
+
 
 /**
  * ============================================================
@@ -383,13 +404,17 @@ export async function POST(
     { status: 201 },
   );
 }
-
 /**
  * ============================================================
  * DELETE /api/conversations/[conversationId]
  * ============================================================
  *
- * Delete a conversation and its mock messages.
+ * Delete conversation from Supabase.
+ *
+ * Messages are removed through:
+ * messages.conversation_id
+ * → conversations.id
+ * ON DELETE CASCADE
  */
 export async function DELETE(
   _request: Request,
@@ -399,36 +424,44 @@ export async function DELETE(
 
   /**
    * ----------------------------------------------------------
-   * 1. Find conversation
+   * 1. Create Supabase admin client
    * ----------------------------------------------------------
    */
-  const conversation = conversations[conversationId];
+  const supabase = createSupabaseAdminClient();
 
-  if (!conversation) {
+  /**
+   * ----------------------------------------------------------
+   * 2. Delete conversation
+   * ----------------------------------------------------------
+   */
+  const { data, error } = await supabase
+    .from("conversations")
+    .delete()
+    .eq("id", conversationId)
+    .select(
+      "id, name, fallback, online, created_at, updated_at",
+    )
+    .single();
+
+  /**
+   * ----------------------------------------------------------
+   * 3. Handle database error
+   * ----------------------------------------------------------
+   */
+  if (error) {
+    console.error(
+      "Failed to delete conversation:",
+      error,
+    );
+
     return NextResponse.json(
       {
         success: false,
-        message: "Conversation not found",
+        message: "Failed to delete conversation",
       },
-      { status: 404 },
+      { status: 500 },
     );
   }
-
-  /**
-   * ----------------------------------------------------------
-   * 2. Remove conversation
-   * ----------------------------------------------------------
-   */
-  delete conversations[conversationId];
-
-  /**
-   * ----------------------------------------------------------
-   * 3. Remove associated messages
-   * ----------------------------------------------------------
-   */
-  delete messagesByConversation[
-    conversationId as keyof typeof messagesByConversation
-  ];
 
   /**
    * ----------------------------------------------------------
@@ -437,6 +470,6 @@ export async function DELETE(
    */
   return NextResponse.json({
     success: true,
-    data: conversation,
+    data,
   });
 }
