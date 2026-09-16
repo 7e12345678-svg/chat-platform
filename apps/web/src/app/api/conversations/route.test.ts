@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+
 const mockSelect = vi.fn();
 const mockOrder = vi.fn();
 const mockInsert = vi.fn();
@@ -15,12 +16,50 @@ vi.mock("@/lib/supabase/server", () => ({
   })),
 }));
 
+const mockRequireUser = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/auth/requireUser", () => ({
+  requireUser: mockRequireUser,
+}));
+
 import { GET, POST } from "./route";
 
 describe("/api/conversations", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+  vi.clearAllMocks();
+
+  // Default: authenticated user
+  mockRequireUser.mockResolvedValue({
+    id: "test-user-id",
+    email: "test@example.com",
   });
+
+  // Default Supabase mock
+  mockSelect.mockReturnValue({
+    order: mockOrder,
+  });
+
+  mockOrder.mockResolvedValue({
+    data: [],
+    error: null,
+  });
+});
+
+it("GET returns 401 when user is not authenticated", async () => {
+  mockRequireUser.mockResolvedValueOnce(null);
+
+  const response = await GET();
+
+  expect(response.status).toBe(401);
+
+  const result = await response.json();
+
+  expect(result.success).toBe(false);
+
+  expect(result.message).toBe(
+    "Authentication required",
+  );
+});
 
   // ============================================================
   // GET — Load conversations from Supabase

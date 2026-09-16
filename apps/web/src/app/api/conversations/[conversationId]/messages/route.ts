@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
+import { requireUser } from "@/lib/auth/requireUser";
+
 /**
  * ============================================================
  * MESSAGES API
@@ -37,9 +39,21 @@ interface RouteContext {
  * ============================================================
  */
 export async function GET(
+  
   _request: Request,
   { params }: RouteContext,
 ) {
+  const user = await requireUser();
+
+if (!user) {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Authentication required",
+    },
+    { status: 401 },
+  );
+}
   const { conversationId } = await params;
 
   /**
@@ -181,6 +195,18 @@ export async function POST(
   request: Request,
   { params }: RouteContext,
 ) {
+
+  const user = await requireUser();
+
+if (!user) {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Authentication required",
+    },
+    { status: 401 },
+  );
+}
   const { conversationId } = await params;
 
   /**

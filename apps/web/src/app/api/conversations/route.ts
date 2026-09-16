@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-
+import { requireUser } from "@/lib/auth/requireUser";
 /**
  * ============================================================
  * CONVERSATIONS API
@@ -26,6 +25,19 @@ const CONVERSATION_SELECT =
  * Load all conversations from Supabase.
  */
 export async function GET() {
+  const user = await requireUser();
+
+  if (!user) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Authentication required",
+      },
+      { status: 401 },
+    );
+  }
+
+  // existing code below
   /**
    * ----------------------------------------------------------
    * 1. Create Supabase admin client

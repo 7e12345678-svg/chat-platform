@@ -1,10 +1,71 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
-import { describe, expect, it } from "vitest";
+const mockRequireUser = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/auth/requireUser", () => ({
+  requireUser: mockRequireUser,
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+
+  mockRequireUser.mockResolvedValue({
+    id: "test-user-id",
+    email: "test@example.com",
+  });
+});
 
 import { GET, POST } from "./route";
-
 describe("POST /api/conversations/[conversationId]/messages", () => {
+
+  it("POST returns 401 when user is not authenticated", async () => {
+  mockRequireUser.mockResolvedValueOnce(null);
+
+  const response = await POST(
+    new Request(
+      "http://localhost:3000/api/conversations/sopheak/messages",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Unauthorized message",
+        }),
+      },
+    ),
+    {
+      params: Promise.resolve({
+        conversationId: "sopheak",
+      }),
+    },
+  );
+
+  expect(response.status).toBe(401);
+
+  const result = await response.json();
+
+  expect(result.success).toBe(false);
+  expect(result.message).toBe(
+    "Authentication required",
+  );
+});
+
+  beforeEach(() => {
+  vi.clearAllMocks();
+
+  mockRequireUser.mockResolvedValue({
+    id: "test-user-id",
+    email: "test@example.com",
+  });
+});
 
   it("creates a message for any conversation stored in Supabase", async () => {
   const supabase = createClient(
@@ -239,4 +300,25 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
       "Conversation not found",
     );
   });
+});
+    it("GET returns 401 when user is not authenticated", async () => {
+  mockRequireUser.mockResolvedValueOnce(null);
+
+  const response = await GET(
+    new Request("http://localhost:3000"),
+    {
+      params: Promise.resolve({
+        conversationId: "sopheak",
+      }),
+    },
+  );
+
+  expect(response.status).toBe(401);
+
+  const result = await response.json();
+
+  expect(result.success).toBe(false);
+  expect(result.message).toBe(
+    "Authentication required",
+  );
 });
