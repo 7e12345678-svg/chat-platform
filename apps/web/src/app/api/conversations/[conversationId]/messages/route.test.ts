@@ -1,14 +1,34 @@
 import { createClient } from "@supabase/supabase-js";
+
 import { describe, expect, it } from "vitest";
+
 import { GET, POST } from "./route";
 
 describe("POST /api/conversations/[conversationId]/messages", () => {
-  it("saves a new message into Supabase", async () => {
-    // Unique content so this test does not conflict with old data.
-    const testContent = `TDD message ${Date.now()}`;
-    const conversationId = "sopheak";
 
-    // Call our API route directly.
+  it("creates a message for any conversation stored in Supabase", async () => {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SECRET_KEY!,
+  );
+
+  // Create a conversation that exists only in Supabase.
+  // This conversation is NOT part of messagesByConversation mock data.
+  const conversationId = `tdd-${Date.now()}`;
+  const testContent = `Supabase conversation message ${Date.now()}`;
+
+  const { error: conversationError } = await supabase
+    .from("conversations")
+    .insert({
+      id: conversationId,
+      name: "TDD Supabase Conversation",
+      fallback: "T",
+      online: false,
+    });
+
+  expect(conversationError).toBeNull();
+
+  try {
     const request = new Request(
       `http://localhost:3000/api/conversations/${conversationId}/messages`,
       {
@@ -30,16 +50,63 @@ describe("POST /api/conversations/[conversationId]/messages", () => {
 
     expect(response.status).toBe(201);
 
-    // Use the server-side secret key only inside the test.
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, conversation_id, sender_id, content, status")
+      .eq("conversation_id", conversationId)
+      .eq("content", testContent)
+      .maybeSingle();
+
+    expect(error).toBeNull();
+    expect(data).not.toBeNull();
+    expect(data?.conversation_id).toBe(conversationId);
+    expect(data?.sender_id).toBe("me");
+    expect(data?.content).toBe(testContent);
+    expect(data?.status).toBe("sent");
+  } finally {
+    // Clean up test data.
+    await supabase
+      .from("conversations")
+      .delete()
+      .eq("id", conversationId);
+  }
+});
+
+  it("saves a new message into Supabase", async () => {
+    const testContent = `TDD message ${Date.now()}`;
+    const conversationId = "sopheak";
+
+    const request = new Request(
+      `http://localhost:3000/api/conversations/${conversationId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: testContent,
+        }),
+      },
+    );
+
+    const response = await POST(request, {
+      params: Promise.resolve({
+        conversationId,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SECRET_KEY!,
     );
 
-    // Verify that the API actually saved the message in the database.
     const { data, error } = await supabase
       .from("messages")
-      .select("id, conversation_id, sender_id, content, status")
+      .select(
+        "id, conversation_id, sender_id, content, status",
+      )
       .eq("conversation_id", conversationId)
       .eq("content", testContent)
       .maybeSingle();
@@ -52,53 +119,69 @@ describe("POST /api/conversations/[conversationId]/messages", () => {
     expect(data?.content).toBe(testContent);
     expect(data?.status).toBe("sent");
   });
+
+  it("POST returns 404 for an unknown conversation", async () => {
+    const conversationId = "unknown";
+
+    const request = new Request(
+      `http://localhost:3000/api/conversations/${conversationId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Message to unknown conversation",
+        }),
+      },
+    );
+
+    const response = await POST(request, {
+      params: Promise.resolve({
+        conversationId,
+      }),
+    });
+
+    expect(response.status).toBe(404);
+
+    const result = await response.json();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      "Conversation not found",
+    );
+  });
 });
 
-   /**
- * ============================================================
- * GET /api/conversations/[conversationId]/messages
- * ============================================================
- *
- * TDD:
- * Test that GET reads messages from Supabase Database.
- * ============================================================
- */
 describe("GET /api/conversations/[conversationId]/messages", () => {
   it("reads messages from Supabase", async () => {
     const conversationId = "sopheak";
     const testContent = `GET TDD message ${Date.now()}`;
 
-    /**
-     * Create a real database message first.
-     *
-     * This gives the GET endpoint something specific
-     * to find in Supabase.
-     */
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SECRET_KEY!,
     );
 
-    const { data: insertedMessage, error: insertError } =
-      await supabase
-        .from("messages")
-        .insert({
-          conversation_id: conversationId,
-          sender_id: "me",
-          content: testContent,
-          status: "sent",
-        })
-        .select(
-          "id, conversation_id, sender_id, content, status, created_at",
-        )
-        .single();
+    const {
+      data: insertedMessage,
+      error: insertError,
+    } = await supabase
+      .from("messages")
+      .insert({
+        conversation_id: conversationId,
+        sender_id: "me",
+        content: testContent,
+        status: "sent",
+      })
+      .select(
+        "id, conversation_id, sender_id, content, status, created_at",
+      )
+      .single();
 
     expect(insertError).toBeNull();
     expect(insertedMessage).not.toBeNull();
 
-    /**
-     * Call the GET route.
-     */
     const request = new Request(
       `http://localhost:3000/api/conversations/${conversationId}/messages`,
       {
@@ -119,10 +202,6 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
     expect(result.success).toBe(true);
     expect(result.data).toBeInstanceOf(Array);
 
-    /**
-     * The GET response must contain
-     * the message we inserted into Supabase.
-     */
     const foundMessage = result.data.find(
       (message: { id: string }) =>
         message.id === insertedMessage!.id,
@@ -132,5 +211,32 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
     expect(foundMessage.text).toBe(testContent);
     expect(foundMessage.sender).toBe("me");
     expect(foundMessage.status).toBe("sent");
+  });
+
+  it("GET returns 404 for an unknown conversation", async () => {
+    const conversationId = "unknown";
+
+    const response = await GET(
+      new Request(
+        `http://localhost:3000/api/conversations/${conversationId}/messages`,
+        {
+          method: "GET",
+        },
+      ),
+      {
+        params: Promise.resolve({
+          conversationId,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+
+    const result = await response.json();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      "Conversation not found",
+    );
   });
 });

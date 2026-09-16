@@ -23,147 +23,6 @@ interface RouteContext {
 
 /**
  * ============================================================
- * GET MESSAGES
- * ============================================================
- *
- * បច្ចុប្បន្ន GET នៅតែប្រើ mock data។
- *
- * 19.5.4 យើងនឹងប្តូរ GET ទៅ Database។
- * ============================================================
- */
-const messagesByConversation = {
-  sopheak: [
-    {
-      id: "sopheak-1",
-      sender: "other",
-      text: "សួស្តី! អ្នកសុខសប្បាយទេ?",
-      time: "10:24 AM",
-      status: "read",
-    },
-    {
-      id: "sopheak-2",
-      sender: "me",
-      text: "ខ្ញុំសុខសប្បាយទេ! អរគុណដែលបានសួរ។",
-      time: "10:25 AM",
-      status: "read",
-    },
-    {
-      id: "sopheak-3",
-      sender: "other",
-      text: "តើអ្នកកំពុងធ្វើការលើគម្រោងថ្មីមែនទេ?",
-      time: "10:26 AM",
-      status: "read",
-    },
-    {
-      id: "sopheak-4",
-      sender: "me",
-      text: "បាទ/ចាស ខ្ញុំកំពុងបង្កើតវេទិកាជជែកឥឡូវនេះ។",
-      time: "10:27 AM",
-      status: "read",
-    },
-    {
-      id: "sopheak-5",
-      sender: "other",
-      text: "ល្អណាស់! វាមើលទៅគួរឱ្យចាប់អារម្មណ៍។",
-      time: "10:28 AM",
-      status: "read",
-    },
-  ],
-
-  dara: [
-    {
-      id: "dara-1",
-      sender: "other",
-      text: "សួស្តី! ថ្ងៃស្អែកអ្នកទំនេរទេ?",
-      time: "9:40 AM",
-      status: "read",
-    },
-    {
-      id: "dara-2",
-      sender: "me",
-      text: "បាទ/ចាស ខ្ញុំគិតថាខ្ញុំទំនេរ។",
-      time: "9:42 AM",
-      status: "read",
-    },
-    {
-      id: "dara-3",
-      sender: "other",
-      text: "ល្អណាស់។ ជួបគ្នាថ្ងៃស្អែក!",
-      time: "9:43 AM",
-      status: "read",
-    },
-  ],
-
-  vanna: [
-    {
-      id: "vanna-1",
-      sender: "other",
-      text: "អរគុណសម្រាប់ជំនួយរបស់អ្នក។",
-      time: "8:20 AM",
-      status: "read",
-    },
-    {
-      id: "vanna-2",
-      sender: "me",
-      text: "មិនអីទេ!",
-      time: "8:22 AM",
-      status: "read",
-    },
-  ],
-
-  "development-team": [
-    {
-      id: "team-1",
-      sender: "other",
-      text: "មុខងារថ្មីរួចរាល់ហើយ។",
-      time: "8:00 AM",
-      status: "read",
-    },
-    {
-      id: "team-2",
-      sender: "me",
-      text: "ល្អណាស់! ខ្ញុំនឹងពិនិត្យវានៅថ្ងៃនេះ។",
-      time: "8:05 AM",
-      status: "read",
-    },
-    {
-      id: "team-3",
-      sender: "other",
-      text: "សូមប្រាប់យើងប្រសិនបើអ្នករកឃើញបញ្ហាណាមួយ។",
-      time: "8:06 AM",
-      status: "read",
-    },
-  ],
-
-  family: [
-    {
-      id: "family-1",
-      sender: "other",
-      text: "អាហារពេលល្ងាចនៅម៉ោង 7:00 យប់។",
-      time: "7:10 AM",
-      status: "read",
-    },
-    {
-      id: "family-2",
-      sender: "me",
-      text: "បាន ខ្ញុំនឹងទៅទីនោះ។",
-      time: "7:12 AM",
-      status: "read",
-    },
-    {
-      id: "family-3",
-      sender: "other",
-      text: "ជួបគ្នាយប់នេះ!",
-      time: "7:13 AM",
-      status: "read",
-    },
-  ],
-} as const;
-
-type ConversationId = keyof typeof messagesByConversation;
-
-/**
- * ============================================================
  * GET MESSAGES FROM SUPABASE
  * ============================================================
  *
@@ -189,6 +48,45 @@ export async function GET(
    * ----------------------------------------------------------
    */
   const supabase = createSupabaseAdminClient();
+
+    /**
+   * ----------------------------------------------------------
+   * 2. Verify conversation exists
+   * ----------------------------------------------------------
+   */
+  const {
+    data: conversation,
+    error: conversationError,
+  } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (conversationError) {
+    console.error(
+      "Failed to load conversation:",
+      conversationError,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to load conversation",
+      },
+      { status: 500 },
+    );
+  }
+
+  if (!conversation) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Conversation not found",
+      },
+      { status: 404 },
+    );
+  }
 
   /**
    * ----------------------------------------------------------
@@ -290,20 +188,39 @@ export async function POST(
    * 1. Check conversation
    * ----------------------------------------------------------
    */
-  const messages =
-    messagesByConversation[
-      conversationId as ConversationId
-    ];
+  const supabase = createSupabaseAdminClient();
 
-  if (!messages) {
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Conversation not found",
-      },
-      { status: 404 },
-    );
-  }
+const { data: conversation, error: conversationError } =
+  await supabase
+    .from("conversations")
+    .select("id")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+if (conversationError) {
+  console.error(
+    "Failed to load conversation:",
+    conversationError,
+  );
+
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Failed to load conversation",
+    },
+    { status: 500 },
+  );
+}
+
+if (!conversation) {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Conversation not found",
+    },
+    { status: 404 },
+  );
+}
 
   /**
    * ----------------------------------------------------------
@@ -331,20 +248,6 @@ export async function POST(
       { status: 400 },
     );
   }
-
-  /**
-   * ----------------------------------------------------------
-   * 4. Create Supabase admin client
-   * ----------------------------------------------------------
-   *
-   * ប្រើ server-only secret key។
-   *
-   * IMPORTANT:
-   * SUPABASE_SECRET_KEY
-   * មិនត្រូវដាក់ NEXT_PUBLIC_ ទេ។
-   * ----------------------------------------------------------
-   */
-  const supabase = createSupabaseAdminClient();
 
   /**
    * ----------------------------------------------------------
