@@ -27,6 +27,46 @@ interface RouteContext {
   }>;
 }
 
+interface Conversation {
+  id: string;
+  name: string;
+  fallback: string;
+  online: boolean;
+}
+
+const conversations: Record<string, Conversation> = {
+  sopheak: {
+    id: "sopheak",
+    name: "Sopheak",
+    fallback: "S",
+    online: true,
+  },
+  dara: {
+    id: "dara",
+    name: "Dara",
+    fallback: "D",
+    online: true,
+  },
+  vanna: {
+    id: "vanna",
+    name: "Vanna",
+    fallback: "V",
+    online: false,
+  },
+  "development-team": {
+    id: "development-team",
+    name: "ក្រុមអភិវឌ្ឍន៍",
+    fallback: "D",
+    online: true,
+  },
+  family: {
+    id: "family",
+    name: "គ្រួសារ",
+    fallback: "F",
+    online: false,
+  },
+};
+
 /**
  * ============================================================
  * MOCK MESSAGES
@@ -203,6 +243,82 @@ export async function GET(
 
 /**
  * ============================================================
+ * PATCH /api/conversations/[conversationId]
+ * ============================================================
+ *
+ * Update conversation name.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: RouteContext,
+) {
+  const { conversationId } = await params;
+
+  /**
+   * ----------------------------------------------------------
+   * 1. Find conversation
+   * ----------------------------------------------------------
+   */
+  const conversation = conversations[conversationId];
+
+  if (!conversation) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Conversation not found",
+      },
+      { status: 404 },
+    );
+  }
+
+  /**
+   * ----------------------------------------------------------
+   * 2. Read request body
+   * ----------------------------------------------------------
+   */
+  const body = await request.json();
+
+  const name =
+    typeof body.name === "string"
+      ? body.name.trim()
+      : "";
+
+  /**
+   * ----------------------------------------------------------
+   * 3. Validate name
+   * ----------------------------------------------------------
+   */
+  if (!name) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Conversation name is required",
+      },
+      { status: 400 },
+    );
+  }
+
+  /**
+   * ----------------------------------------------------------
+   * 4. Update conversation
+   * ----------------------------------------------------------
+   */
+  conversation.name = name;
+  conversation.fallback = name.charAt(0).toUpperCase();
+
+  /**
+   * ----------------------------------------------------------
+   * 5. Return updated conversation
+   * ----------------------------------------------------------
+   */
+  return NextResponse.json({
+    success: true,
+    data: conversation,
+  });
+}
+
+/**
+ * ============================================================
  * CREATE MESSAGE
  * ============================================================
  *
@@ -266,4 +382,61 @@ export async function POST(
     },
     { status: 201 },
   );
+}
+
+/**
+ * ============================================================
+ * DELETE /api/conversations/[conversationId]
+ * ============================================================
+ *
+ * Delete a conversation and its mock messages.
+ */
+export async function DELETE(
+  _request: Request,
+  { params }: RouteContext,
+) {
+  const { conversationId } = await params;
+
+  /**
+   * ----------------------------------------------------------
+   * 1. Find conversation
+   * ----------------------------------------------------------
+   */
+  const conversation = conversations[conversationId];
+
+  if (!conversation) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Conversation not found",
+      },
+      { status: 404 },
+    );
+  }
+
+  /**
+   * ----------------------------------------------------------
+   * 2. Remove conversation
+   * ----------------------------------------------------------
+   */
+  delete conversations[conversationId];
+
+  /**
+   * ----------------------------------------------------------
+   * 3. Remove associated messages
+   * ----------------------------------------------------------
+   */
+  delete messagesByConversation[
+    conversationId as keyof typeof messagesByConversation
+  ];
+
+  /**
+   * ----------------------------------------------------------
+   * 4. Return deleted conversation
+   * ----------------------------------------------------------
+   */
+  return NextResponse.json({
+    success: true,
+    data: conversation,
+  });
 }
