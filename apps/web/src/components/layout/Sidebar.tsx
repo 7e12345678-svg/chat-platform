@@ -1,3 +1,7 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+
 import { Avatar } from "@/components/ui/Avatar";
 
 /* ============================================================
@@ -18,7 +22,22 @@ import { Avatar } from "@/components/ui/Avatar";
  * This component currently uses static UI data.
  * Real user/server data will be connected later.
  */
-export function Sidebar() {
+
+  export function Sidebar() {
+  const router = useRouter();
+
+  async function handleLogout() {
+    const response = await fetch("/api/auth/logout", {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    router.push("/auth/login");
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
 
@@ -172,6 +191,15 @@ export function Sidebar() {
               Online
             </p>
           </div>
+
+          <button
+  type="button"
+  aria-label="Logout"
+  onClick={handleLogout}
+  className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+>
+  ⇥
+</button>
 
           <button
             type="button"
