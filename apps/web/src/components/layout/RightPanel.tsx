@@ -1,36 +1,16 @@
 import { Avatar } from "@/components/ui/Avatar";
 import type { UserPresence } from "@/components/layout/ChatArea";
 
-/* ============================================================
-   RIGHT PANEL
-   ============================================================ */
-
-/**
- * RightPanel
- *
- * Displays additional information about the active conversation.
- *
- * Current UI sections:
- * - Profile
- * - Conversation actions
- * - Shared media
- * - Members
- *
- * Real data will be connected later.
- */
 export function RightPanel({
   conversationName,
   presence,
+  currentUserPresence,
   lastSeenText,
-  onPresenceChange,
 }: {
   conversationName: string;
   presence?: UserPresence;
+  currentUserPresence?: UserPresence;
   lastSeenText?: string;
-  onPresenceChange?: (
-    status: UserPresence["status"],
-    lastSeen?: string,
-  ) => void;
 }) {
 
   // ============================================================
@@ -87,39 +67,6 @@ export function RightPanel({
   ? "Online"
   : lastSeenText ?? "Offline"}
 </p>
-
-{/* ============================================================
-   PRESENCE TEST CONTROLS
-   Temporary controls for testing Online / Offline / Last Seen.
-   Later these will be replaced by realtime presence data.
-   ============================================================ */}
-<div className="mt-4 flex flex-wrap justify-center gap-2">
-  <button
-    type="button"
-    onClick={() => onPresenceChange?.("online")}
-    className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"
-  >
-    🟢 Online
-  </button>
-
-  <button
-    type="button"
-    onClick={() => onPresenceChange?.("offline")}
-    className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"
-  >
-    ⚪ Offline
-  </button>
-
-  <button
-    type="button"
-    onClick={() =>
-      onPresenceChange?.("offline", "5 minutes ago")
-    }
-    className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)]"
-  >
-    🕐 Last seen
-  </button>
-</div>
 
         </section>
 
@@ -222,13 +169,17 @@ export function RightPanel({
               />
 
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  You
-                </p>
-
-                <p className="text-xs text-[var(--text-muted)]">
-                  Offline
-                </p>
+                <p
+  className={
+    currentUserPresence?.status === "online"
+      ? "text-xs text-[var(--success)]"
+      : "text-xs text-[var(--text-muted)]"
+  }
+>
+  {currentUserPresence?.status === "online"
+    ? "Online"
+    : "Offline"}
+</p>
               </div>
             </div>
 

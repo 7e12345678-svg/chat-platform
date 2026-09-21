@@ -13,6 +13,22 @@ import type {
   UserPresence,
 } from "@/components/layout/ChatArea";
 
+import { subscribeToMessages } from "@/lib/chat/realtime";
+import {
+  appendMessage,
+  mapRealtimeMessage,
+} from "@/lib/chat/messages";
+
+import {
+  getCurrentUserId,
+  subscribeToPresence,
+} from "@/lib/chat/presence";
+
+import {
+  getCurrentUserPresence,
+  getRemotePresence,
+} from "@/lib/chat/presence-state";
+
 /* ============================================================
  * TYPES
  * ============================================================ */
@@ -119,6 +135,49 @@ export default function Home() {
     Message[]
   >>({});
 
+    /* ==========================================================
+   * REALTIME MESSAGES
+   *
+   * Subscribe to new messages for the selected conversation.
+   * Supabase Realtime DB row → Frontend Message → UI
+   * ========================================================== */
+
+  useEffect(() => {
+    const channel = subscribeToMessages(
+      selectedConversationId,
+      (realtimeMessage) => {
+        const message = mapRealtimeMessage(
+          realtimeMessage as {
+            id: string;
+            conversation_id: string;
+            sender_id: string;
+            content: string;
+            status: "sent" | "delivered" | "read";
+            created_at: string;
+          },
+        );
+
+        setMessagesByConversation(
+          (currentMessages) => ({
+            ...currentMessages,
+
+            [selectedConversationId]:
+              appendMessage(
+                currentMessages[
+                  selectedConversationId
+                ] ?? [],
+                message,
+              ),
+          }),
+        );
+      },
+    );
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [selectedConversationId]);
+
   /* ==========================================================
    * CONVERSATIONS STATE
    * ========================================================== */
@@ -164,6 +223,10 @@ export default function Home() {
       status: "offline",
       lastSeen: "1 hour ago",
     },
+  });
+  const [currentUserPresence, setCurrentUserPresence] =
+  useState<UserPresence>({
+    status: "offline",
   });
 
   /* ==========================================================
@@ -314,43 +377,70 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ==========================================================
-   * PRESENCE CHANGE
+    /* ==========================================================
+   * REALTIME PRESENCE
+   *
+   * Track the current authenticated user and listen for
+   * other users joining/leaving the selected conversation.
    * ========================================================== */
 
-  const handlePresenceChange = (
-    status: UserPresence["status"],
-    lastSeen?: string,
-  ) => {
-    const currentLastSeen =
-      lastSeen ??
-      new Date().toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-      });
+  useEffect(() => {
+    let channel: ReturnType<
+      typeof subscribeToPresence
+    > | null = null;
 
-    const lastSeenAt =
-      status === "offline"
-        ? Date.now()
-        : undefined;
+    const setupPresence = async () => {
+      const userId = await getCurrentUserId();
 
-    setPresenceByConversation(
-      (currentPresence) => ({
-        ...currentPresence,
+      if (!userId) {
+        return;
+      }
 
-        [selectedConversationId]: {
-          status,
+      channel = subscribeToPresence(
+        selectedConversationId,
+        userId,
+        (presenceState) => {
+          const typedPresenceState =
+  presenceState as Record<
+    string,
+    {
+      userId?: string;
+      onlineAt?: string;
+    }[]
+  >;
 
-          ...(status === "offline"
-            ? {
-                lastSeen: currentLastSeen,
-                lastSeenAt,
-              }
-            : {}),
+const currentPresence =
+  getCurrentUserPresence(
+    typedPresenceState,
+    userId,
+  );
+
+const remotePresence =
+  getRemotePresence(
+    typedPresenceState,
+    userId,
+  );
+
+setCurrentUserPresence(currentPresence);
+
+setPresenceByConversation(
+  (currentPresenceByConversation) => ({
+    ...currentPresenceByConversation,
+
+    [selectedConversationId]:
+      remotePresence,
+  }),
+);
         },
-      }),
-    );
-  };
+      );
+    };
+
+    void setupPresence();
+
+    return () => {
+      channel?.unsubscribe();
+    };
+  }, [selectedConversationId]);
 
   /* ==========================================================
    * SELECT CONVERSATION
@@ -839,14 +929,12 @@ export default function Home() {
               selectedConversationId
             ]
           }
+          currentUserPresence={currentUserPresence}
           lastSeenText={formatLastSeen(
             presenceByConversation[
               selectedConversationId
             ]?.lastSeenAt,
           )}
-          onPresenceChange={
-            handlePresenceChange
-          }
         />
       }
     >
