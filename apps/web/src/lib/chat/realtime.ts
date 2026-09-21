@@ -22,7 +22,20 @@ export function subscribeToMessages(
         onMessage(payload.new);
       },
     )
-    .subscribe();
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "messages",
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      (payload) => {
+        onMessage(payload.new);
+      },
+    );
+
+  channel.subscribe();
 
   return channel;
 }

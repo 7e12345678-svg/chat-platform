@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
+import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatArea } from "@/components/layout/ChatArea";
 import { ConversationList } from "@/components/layout/ConversationList";
@@ -15,9 +14,18 @@ import type {
 
 import { subscribeToMessages } from "@/lib/chat/realtime";
 import {
-  appendMessage,
+  broadcastTyping,
+  subscribeToTyping,
+} from "@/lib/chat/typing";
+
+import {
   mapRealtimeMessage,
+  upsertMessage,
 } from "@/lib/chat/messages";
+
+import {
+  getUnreadIncomingMessageIds,
+} from "@/lib/chat/read-status";
 
 import {
   getCurrentUserId,
@@ -143,6 +151,16 @@ export default function Home() {
    * ========================================================== */
 
   useEffect(() => {
+  let cleanupRealtime: (() => void) | null = null;
+  let disposed = false;
+
+  const setupRealtimeMessages = async () => {
+    const userId = await getCurrentUserId();
+
+    if (!userId) {
+      return;
+    }
+
     const channel = subscribeToMessages(
       selectedConversationId,
       (realtimeMessage) => {
@@ -152,9 +170,13 @@ export default function Home() {
             conversation_id: string;
             sender_id: string;
             content: string;
-            status: "sent" | "delivered" | "read";
+            status:
+              | "sent"
+              | "delivered"
+              | "read";
             created_at: string;
           },
+          userId,
         );
 
         setMessagesByConversation(
@@ -162,7 +184,7 @@ export default function Home() {
             ...currentMessages,
 
             [selectedConversationId]:
-              appendMessage(
+              upsertMessage(
                 currentMessages[
                   selectedConversationId
                 ] ?? [],
@@ -173,10 +195,23 @@ export default function Home() {
       },
     );
 
-    return () => {
+    if (disposed) {
+      channel.unsubscribe();
+      return;
+    }
+
+    cleanupRealtime = () => {
       channel.unsubscribe();
     };
-  }, [selectedConversationId]);
+  };
+
+  void setupRealtimeMessages();
+
+  return () => {
+    disposed = true;
+    cleanupRealtime?.();
+  };
+}, [selectedConversationId]);
 
   /* ==========================================================
    * CONVERSATIONS STATE
@@ -250,6 +285,11 @@ export default function Home() {
     setIsTyping,
   ] = useState(false);
 
+  const typingChannelRef = useRef<
+  ReturnType<typeof subscribeToTyping> | null
+>(null);
+const currentUserIdRef = useRef<string | null>(null);
+
   /* ==========================================================
    * LOAD MESSAGES
    *
@@ -257,115 +297,125 @@ export default function Home() {
    * ========================================================== */
 
   const loadMessages = async (
-    conversationId: ConversationId,
-  ) => {
-    try {
-      const response = await fetch(
-        `/api/conversations/${conversationId}/messages`,
-      );
+  conversationId: ConversationId,
+): Promise<Message[] | null> => {
+  try {
+    const response = await fetch(
+      `/api/conversations/${conversationId}/messages`,
+    );
 
-      if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => null);
+    if (!response.ok) {
+      const errorData = await response
+        .json()
+        .catch(() => null);
 
-        throw new Error(
-          errorData?.message ||
-            "Failed to load messages",
-        );
-      }
-
-      const result = await response.json();
-
-      const apiMessages =
-        result.data as Message[];
-
-      setMessagesByConversation(
-        (currentMessages) => ({
-          ...currentMessages,
-          [conversationId]: apiMessages,
-        }),
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load messages:",
-        error,
+      throw new Error(
+        errorData?.message ||
+          "Failed to load messages",
       );
     }
-  };
+
+    const result = await response.json();
+
+    const apiMessages =
+      result.data as Message[];
+
+    setMessagesByConversation(
+      (currentMessages) => ({
+        ...currentMessages,
+        [conversationId]: apiMessages,
+      }),
+    );
+
+    return apiMessages;
+  } catch (error) {
+    console.error(
+      "Failed to load messages:",
+      error,
+    );
+
+    return null;
+  }
+};
 
   /* ==========================================================
-   * LOAD CONVERSATIONS
-   *
-   * GET /api/conversations
-   * ========================================================== */
+ * LOAD CONVERSATIONS
+ *
+ * GET /api/conversations
+ * ========================================================== */
 
-  const loadConversations = async () => {
-    try {
-      setIsLoadingConversations(true);
+const loadConversations = async () => {
+  try {
+    setIsLoadingConversations(true);
 
-      const response = await fetch(
-        "/api/conversations",
-      );
+    const response = await fetch(
+      "/api/conversations",
+    );
 
-      if (!response.ok) {
-        const errorData = await response
+    if (!response.ok) {
+      const errorData =
+        await response
           .json()
           .catch(() => null);
 
-        throw new Error(
-          errorData?.message ||
-            "Failed to load conversations",
-        );
-      }
-
-      const result = await response.json();
-
-      const apiConversations =
-        result.data as Conversation[];
-
-      setConversations(apiConversations);
-
-      /* --------------------------------------------------------
-       * SELECT CONVERSATION
-       * -------------------------------------------------------- */
-
-      const selectedStillExists =
-        apiConversations.some(
-          (conversation) =>
-            conversation.id ===
-            selectedConversationId,
-        );
-
-      const nextConversationId =
-        selectedStillExists
-          ? selectedConversationId
-          : apiConversations[0]?.id;
-
-      if (!nextConversationId) {
-        return;
-      }
-
-      setSelectedConversationId(
-        nextConversationId,
+      throw new Error(
+        errorData?.message ||
+          "Failed to load conversations",
       );
-
-      /* --------------------------------------------------------
-       * LOAD INITIAL MESSAGES
-       * -------------------------------------------------------- */
-
-      await loadMessages(
-        nextConversationId,
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load conversations:",
-        error,
-      );
-    } finally {
-      setIsLoadingConversations(false);
     }
-  };
+
+    const result =
+      await response.json();
+
+    const apiConversations =
+      result.data as Conversation[];
+
+    setConversations(
+      apiConversations,
+    );
+
+    /* --------------------------------------------------------
+     * SELECT CONVERSATION
+     * -------------------------------------------------------- */
+
+    const selectedStillExists =
+      apiConversations.some(
+        (conversation) =>
+          conversation.id ===
+          selectedConversationId,
+      );
+
+    const nextConversationId =
+      selectedStillExists
+        ? selectedConversationId
+        : apiConversations[0]?.id;
+
+    if (!nextConversationId) {
+      return;
+    }
+
+    setSelectedConversationId(
+      nextConversationId,
+    );
+
+    /* --------------------------------------------------------
+     * LOAD INITIAL MESSAGES
+     * -------------------------------------------------------- */
+
+    await loadMessages(
+      nextConversationId,
+    );
+  } catch (error) {
+    console.error(
+      "Failed to load conversations:",
+      error,
+    );
+  } finally {
+    setIsLoadingConversations(
+      false,
+    );
+  }
+};
 
   /* ==========================================================
    * INITIAL DATA LOAD
@@ -377,7 +427,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-    /* ==========================================================
+      /* ==========================================================
    * REALTIME PRESENCE
    *
    * Track the current authenticated user and listen for
@@ -401,36 +451,35 @@ export default function Home() {
         userId,
         (presenceState) => {
           const typedPresenceState =
-  presenceState as Record<
-    string,
-    {
-      userId?: string;
-      onlineAt?: string;
-    }[]
-  >;
+            presenceState as Record<
+              string,
+              {
+                userId?: string;
+                onlineAt?: string;
+              }[]
+            >;
 
-const currentPresence =
-  getCurrentUserPresence(
-    typedPresenceState,
-    userId,
-  );
+          const currentPresence =
+            getCurrentUserPresence(
+              typedPresenceState,
+              userId,
+            );
 
-const remotePresence =
-  getRemotePresence(
-    typedPresenceState,
-    userId,
-  );
+          const remotePresence =
+            getRemotePresence(
+              typedPresenceState,
+              userId,
+            );
 
-setCurrentUserPresence(currentPresence);
+          setCurrentUserPresence(currentPresence);
 
-setPresenceByConversation(
-  (currentPresenceByConversation) => ({
-    ...currentPresenceByConversation,
-
-    [selectedConversationId]:
-      remotePresence,
-  }),
-);
+          setPresenceByConversation(
+            (currentPresenceByConversation) => ({
+              ...currentPresenceByConversation,
+              [selectedConversationId]:
+                remotePresence,
+            }),
+          );
         },
       );
     };
@@ -441,6 +490,58 @@ setPresenceByConversation(
       channel?.unsubscribe();
     };
   }, [selectedConversationId]);
+
+  /* ==========================================================
+   * REALTIME TYPING
+   *
+   * Listen for typing events from other users.
+   * ========================================================== */
+
+  useEffect(() => {
+    const setupTyping = async () => {
+      const userId = await getCurrentUserId();
+
+      if (!userId) {
+        return;
+      }
+
+      currentUserIdRef.current = userId;
+
+      typingChannelRef.current =
+        subscribeToTyping(
+          selectedConversationId,
+          userId,
+          (remoteIsTyping) => {
+            setIsTyping(remoteIsTyping);
+          },
+        );
+    };
+
+    void setupTyping();
+
+    return () => {
+      typingChannelRef.current?.unsubscribe();
+      typingChannelRef.current = null;
+      currentUserIdRef.current = null;
+    };
+  }, [selectedConversationId]);
+
+    const handleTypingChange = async (typing: boolean) => {
+    setIsTyping(typing);
+
+    const channel = typingChannelRef.current;
+    const userId = currentUserIdRef.current;
+
+    if (!channel || !userId) {
+      return;
+    }
+
+    await broadcastTyping(
+      channel,
+      userId,
+      typing,
+    );
+  };
 
   /* ==========================================================
    * SELECT CONVERSATION
@@ -463,17 +564,17 @@ setPresenceByConversation(
      * 2. Load messages from backend
      * ---------------------------------------------------------- */
 
-    await loadMessages(
-      conversationId,
-    );
+    const loadedMessages =
+  await loadMessages(
+    conversationId,
+  );
 
-    /* ----------------------------------------------------------
-     * 3. Mark conversation as read
-     * ---------------------------------------------------------- */
-
-    markConversationAsRead(
-      conversationId,
-    );
+if (loadedMessages) {
+  await markConversationAsRead(
+    conversationId,
+    loadedMessages,
+  );
+}
 
     /* ----------------------------------------------------------
      * 4. Reset unread count
@@ -537,29 +638,108 @@ setPresenceByConversation(
   };
 
   /* ==========================================================
-   * MARK CONVERSATION AS READ
-   * ========================================================== */
+ * MARK CONVERSATION AS READ
+ * ========================================================== */
 
-  const markConversationAsRead = (
-    conversationId: ConversationId,
-  ) => {
+const markConversationAsRead = async (
+  conversationId: ConversationId,
+  messages: Message[],
+) => {
+  const messageIds =
+    getUnreadIncomingMessageIds(messages);
+
+  if (messageIds.length === 0) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/conversations/${conversationId}/messages`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messageIds,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorData =
+        await response.json().catch(() => null);
+
+      throw new Error(
+        errorData?.message ||
+          "Failed to mark messages as read",
+      );
+    }
+
+    const result = await response.json();
+
+    const updatedMessages =
+      result.data as {
+        id: string;
+        status: "read";
+      }[];
+
     setMessagesByConversation(
       (currentMessages) => ({
         ...currentMessages,
 
         [conversationId]: (
           currentMessages[conversationId] ?? []
-        ).map((message) =>
-          message.sender === "me"
+        ).map((message) => {
+          const wasMarkedRead =
+            updatedMessages.some(
+              (item) => item.id === message.id,
+            );
+
+          return wasMarkedRead
             ? {
                 ...message,
                 status: "read",
               }
-            : message,
-        ),
+            : message;
+        }),
       }),
     );
-  };
+  } catch (error) {
+    console.error(
+      "Failed to mark messages as read:",
+      error,
+    );
+  }
+};
+
+  /* ==========================================================
+ * AUTO MARK READ
+ *
+ * Mark incoming unread messages as read whenever the
+ * currently selected conversation has messages loaded.
+ * This also handles the default selected conversation
+ * after login.
+ * ========================================================== */
+
+useEffect(() => {
+  const messages =
+    messagesByConversation[
+      selectedConversationId
+    ];
+
+  if (!messages || messages.length === 0) {
+    return;
+  }
+
+  void markConversationAsRead(
+    selectedConversationId,
+    messages,
+  );
+}, [
+  selectedConversationId,
+  messagesByConversation,
+]);
 
   /* ==========================================================
    * SEND MESSAGE
@@ -683,17 +863,6 @@ setPresenceByConversation(
         );
       }, 700);
 
-      /* --------------------------------------------------------
-       * 9. Temporary read status
-       * -------------------------------------------------------- */
-
-      setTimeout(() => {
-        updateMessageStatus(
-          selectedConversationId,
-          newMessage.id,
-          "read",
-        );
-      }, 1500);
     } catch (error) {
       console.error(
         "Failed to send message:",
@@ -1008,7 +1177,7 @@ setPresenceByConversation(
                 handleDeleteMessage
               }
               onTypingChange={
-                setIsTyping
+                handleTypingChange
               }
             />
           </div>
@@ -1059,7 +1228,7 @@ setPresenceByConversation(
                 handleDeleteMessage
               }
               onTypingChange={
-                setIsTyping
+                handleTypingChange
               }
             />
           </div>

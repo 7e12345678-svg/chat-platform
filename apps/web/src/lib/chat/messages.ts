@@ -20,14 +20,36 @@ export function appendMessage(
   return [...messages, message];
 }
 
+export function upsertMessage(
+  messages: Message[],
+  message: Message,
+): Message[] {
+  const existingIndex = messages.findIndex(
+    (item) => item.id === message.id,
+  );
+
+  if (existingIndex === -1) {
+    return [...messages, message];
+  }
+
+  return messages.map((item) =>
+    item.id === message.id ? message : item,
+  );
+}
+
 export function mapRealtimeMessage(
   message: RealtimeMessage,
+  currentUserId?: string,
 ): Message {
   return {
     id: message.id,
 
     sender:
-      message.sender_id === "me"
+      message.sender_id === "me" ||
+      (
+        currentUserId !== undefined &&
+        message.sender_id === currentUserId
+      )
         ? "me"
         : "other",
 

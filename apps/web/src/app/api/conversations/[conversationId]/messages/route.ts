@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 import { requireUser } from "@/lib/auth/requireUser";
 
+
 /**
  * ============================================================
  * MESSAGES API
@@ -148,8 +149,7 @@ if (!user) {
    */
   const messages = data.map((message) => ({
     id: message.id,
-    sender:
-      message.sender_id === "me"
+      sender: message.sender_id === user.id
         ? ("me" as const)
         : ("other" as const),
     text: message.content,
@@ -173,6 +173,122 @@ if (!user) {
   return NextResponse.json({
     success: true,
     data: messages,
+  });
+}
+
+/**
+ * ============================================================
+ * PATCH / MARK MESSAGES AS READ
+ * ============================================================
+ *
+ * PATCH /api/conversations/[conversationId]/messages
+ *
+ * Flow:
+ * 1. Check authentication
+ * 2. Read message IDs
+ * 3. Validate message IDs
+ * 4. Update matching messages to "read"
+ * 5. Return updated messages
+ * ============================================================
+ */
+export async function PATCH(
+  request: Request,
+  { params }: RouteContext,
+) {
+  const { conversationId } = await params;
+
+  /* ----------------------------------------------------------
+   * 1. Check authentication
+   * ---------------------------------------------------------- */
+
+  const user = await requireUser();
+
+  if (!user) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Authentication required",
+      },
+      { status: 401 },
+    );
+  }
+
+  /* ----------------------------------------------------------
+   * 2. Read request body
+   * ---------------------------------------------------------- */
+
+  const body = await request.json();
+
+  const messageIds = Array.isArray(body.messageIds)
+    ? body.messageIds.filter(
+        (id: unknown): id is string =>
+          typeof id === "string" && id.trim().length > 0,
+      )
+    : [];
+
+  /* ----------------------------------------------------------
+   * 3. Validate message IDs
+   * ---------------------------------------------------------- */
+
+  if (messageIds.length === 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: "messageIds are required",
+      },
+      { status: 400 },
+    );
+  }
+
+  /* ----------------------------------------------------------
+   * 4. Update messages in Supabase
+   *
+   * Only messages belonging to the selected conversation
+   * are allowed to change.
+   * ---------------------------------------------------------- */
+
+  const supabase = createSupabaseAdminClient();
+
+  const { data, error } = await supabase
+    .from("messages")
+    .update({
+      status: "read",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("conversation_id", conversationId)
+    .in("id", messageIds)
+    .neq("sender_id", user.id)
+    .in("status", ["sent", "delivered"])
+    .select(
+      "id, conversation_id, sender_id, content, status, created_at, updated_at",
+    );
+
+  /* ----------------------------------------------------------
+   * 5. Handle database error
+   * ---------------------------------------------------------- */
+
+  if (error) {
+    console.error(
+      "Failed to mark messages as read:",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to mark messages as read",
+      },
+      { status: 500 },
+    );
+  }
+
+  /* ----------------------------------------------------------
+   * 6. Return updated messages
+   * ---------------------------------------------------------- */
+
+  return NextResponse.json({
+    success: true,
+    data,
   });
 }
 
@@ -284,7 +400,7 @@ if (!conversation) {
     .from("messages")
     .insert({
       conversation_id: conversationId,
-      sender_id: "me",
+      sender_id: user.id,
       content: text,
       status: "sent",
     })

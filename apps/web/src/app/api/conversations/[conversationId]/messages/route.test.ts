@@ -21,8 +21,7 @@ beforeEach(() => {
     email: "test@example.com",
   });
 });
-
-import { GET, POST } from "./route";
+import { GET, PATCH, POST } from "./route";
 describe("POST /api/conversations/[conversationId]/messages", () => {
 
   it("POST returns 401 when user is not authenticated", async () => {
@@ -121,7 +120,7 @@ describe("POST /api/conversations/[conversationId]/messages", () => {
     expect(error).toBeNull();
     expect(data).not.toBeNull();
     expect(data?.conversation_id).toBe(conversationId);
-    expect(data?.sender_id).toBe("me");
+    expect(data?.sender_id).toBe("test-user-id");
     expect(data?.content).toBe(testContent);
     expect(data?.status).toBe("sent");
   } finally {
@@ -176,7 +175,7 @@ describe("POST /api/conversations/[conversationId]/messages", () => {
     expect(data).not.toBeNull();
 
     expect(data?.conversation_id).toBe(conversationId);
-    expect(data?.sender_id).toBe("me");
+    expect(data?.sender_id).toBe("test-user-id");
     expect(data?.content).toBe(testContent);
     expect(data?.status).toBe("sent");
   });
@@ -231,7 +230,7 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
       .from("messages")
       .insert({
         conversation_id: conversationId,
-        sender_id: "me",
+        sender_id: "test-user-id",
         content: testContent,
         status: "sent",
       })
@@ -321,4 +320,164 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
   expect(result.message).toBe(
     "Authentication required",
   );
+});
+
+   /**
+ * ============================================================
+ * PATCH /api/conversations/[conversationId]/messages
+ * ============================================================
+ *
+ * TDD:
+ * Test that PATCH marks a message as read in Supabase.
+ * ============================================================
+ */
+describe(
+  "PATCH /api/conversations/[conversationId]/messages",
+  () => {
+    it("marks a message as read", async () => {
+      const conversationId = "sopheak";
+      const testContent = `READ TDD message ${Date.now()}`;
+
+      // --------------------------------------------------------
+      // 1. Create a sent message
+      // --------------------------------------------------------
+
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SECRET_KEY!,
+      );
+
+      const {
+        data: insertedMessage,
+        error: insertError,
+      } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: conversationId,
+          sender_id: "other-user-id",
+          content: testContent,
+          status: "sent",
+        })
+        .select(
+          "id, conversation_id, sender_id, content, status",
+        )
+        .single();
+
+      expect(insertError).toBeNull();
+      expect(insertedMessage).not.toBeNull();
+      expect(insertedMessage?.status).toBe("sent");
+
+      // --------------------------------------------------------
+      // 2. Call PATCH API
+      // --------------------------------------------------------
+
+      const request = new Request(
+        `http://localhost:3000/api/conversations/${conversationId}/messages`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messageIds: [insertedMessage!.id],
+          }),
+        },
+      );
+
+      const response = await PATCH(request, {
+        params: Promise.resolve({
+          conversationId,
+        }),
+      });
+
+      // --------------------------------------------------------
+      // 3. Verify API response
+      // --------------------------------------------------------
+
+      expect(response.status).toBe(200);
+
+      const result = await response.json();
+
+      expect(result.success).toBe(true);
+
+      // --------------------------------------------------------
+      // 4. Verify Supabase
+      // --------------------------------------------------------
+
+      const {
+        data: updatedMessage,
+        error: readError,
+      } = await supabase
+        .from("messages")
+        .select("id, status")
+        .eq("id", insertedMessage!.id)
+        .single();
+
+      expect(readError).toBeNull();
+      expect(updatedMessage?.status).toBe("read");
+    });
+  },
+);
+
+  it("does not mark my own message as read", async () => {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SECRET_KEY!,
+  );
+
+  const conversationId = `read-own-${Date.now()}`;
+
+  const { data: conversation } = await supabase
+    .from("conversations")
+    .insert({
+      id: conversationId,
+      name: "Read Own Test",
+      fallback: "R",
+      online: false,
+    })
+    .select("id")
+    .single();
+
+  expect(conversation).not.toBeNull();
+
+  const { data: insertedMessage, error: insertError } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: "test-user-id",
+      content: "My own message",
+      status: "sent",
+    })
+    .select("id, status")
+    .single();
+
+  expect(insertError).toBeNull();
+  expect(insertedMessage).not.toBeNull();
+
+  const request = new Request(
+    `http://localhost:3000/api/conversations/${conversationId}/messages`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messageIds: [insertedMessage!.id],
+      }),
+    },
+  );
+
+  const response = await PATCH(request, {
+    params: Promise.resolve({ conversationId }),
+  });
+
+  expect(response.status).toBe(200);
+
+  const { data: messageAfterPatch } = await supabase
+    .from("messages")
+    .select("id, status")
+    .eq("id", insertedMessage!.id)
+    .single();
+
+  expect(messageAfterPatch?.status).toBe("sent");
 });
