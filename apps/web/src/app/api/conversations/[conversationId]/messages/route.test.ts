@@ -419,6 +419,108 @@ describe(
   },
 );
 
+  it("edits my own message content", async () => {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SECRET_KEY!,
+  );
+
+  const conversationId = `edit-${Date.now()}`;
+  const originalContent = `Original message ${Date.now()}`;
+  const editedContent = "Edited message content";
+
+  // --------------------------------------------------------
+  // 1. Create a conversation
+  // --------------------------------------------------------
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from("conversations")
+    .insert({
+      id: conversationId,
+      name: "Edit Message Test",
+      fallback: "E",
+      online: false,
+    })
+    .select("id")
+    .single();
+
+  expect(conversationError).toBeNull();
+  expect(conversation).not.toBeNull();
+
+  // --------------------------------------------------------
+  // 2. Create my own message
+  // --------------------------------------------------------
+
+  const {
+    data: insertedMessage,
+    error: insertError,
+  } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: "test-user-id",
+      content: originalContent,
+      status: "sent",
+    })
+    .select("id, content, sender_id")
+    .single();
+
+  expect(insertError).toBeNull();
+  expect(insertedMessage).not.toBeNull();
+  expect(insertedMessage?.content).toBe(originalContent);
+  expect(insertedMessage?.sender_id).toBe("test-user-id");
+
+  // --------------------------------------------------------
+  // 3. Call PATCH API
+  // --------------------------------------------------------
+
+  const request = new Request(
+    `http://localhost:3000/api/conversations/${conversationId}/messages`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messageIds: [insertedMessage!.id],
+        content: editedContent,
+      }),
+    },
+  );
+
+  const response = await PATCH(request, {
+    params: Promise.resolve({
+      conversationId,
+    }),
+  });
+
+  // --------------------------------------------------------
+  // 4. Verify API response
+  // --------------------------------------------------------
+
+  expect(response.status).toBe(200);
+
+  const result = await response.json();
+
+  expect(result.success).toBe(true);
+
+  // --------------------------------------------------------
+  // 5. Verify Supabase
+  // --------------------------------------------------------
+
+  const {
+    data: updatedMessage,
+    error: updateError,
+  } = await supabase
+    .from("messages")
+    .select("id, content")
+    .eq("id", insertedMessage!.id)
+    .single();
+
+  expect(updateError).toBeNull();
+  expect(updatedMessage?.content).toBe(editedContent);
+});
+
   it("does not mark my own message as read", async () => {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

@@ -240,38 +240,120 @@ export async function PATCH(
     );
   }
 
-  const requestedStatus =
-  body.status === "delivered"
-    ? "delivered"
-    : "read";
+    /**
+   * ----------------------------------------------------------
+   * 4. Edit message OR update delivery/read status
+   * ----------------------------------------------------------
+   */
 
-  /* ----------------------------------------------------------
-   * 4. Update messages in Supabase
-   *
-   * Only messages belonging to the selected conversation
-   * are allowed to change.
-   * ---------------------------------------------------------- */
+  const content =
+    typeof body.content === "string"
+      ? body.content.trim()
+      : null;
 
   const supabase = createSupabaseAdminClient();
 
+  /**
+   * ----------------------------------------------------------
+   * EDIT MESSAGE
+   *
+   * Only the message owner can edit their own message.
+   * ----------------------------------------------------------
+   */
+  if (content !== null) {
+    if (!content) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Message content is required",
+        },
+        { status: 400 },
+      );
+    }
+
+    const { data, error } = await supabase
+      .from("messages")
+      .update({
+        content,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("conversation_id", conversationId)
+      .in("id", messageIds)
+      .eq("sender_id", user.id)
+      .select(
+        "id, conversation_id, sender_id, content, status, created_at, updated_at",
+      );
+
+    if (error) {
+      console.error(
+        "Failed to edit message:",
+        error,
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Failed to edit message",
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      data,
+    });
+  }
+
+  /**
+   * ----------------------------------------------------------
+   * DELIVERY / READ STATUS
+   * ----------------------------------------------------------
+   */
+
+  const requestedStatus =
+    body.status === "delivered"
+      ? "delivered"
+      : "read";
+
   const { data, error } = await supabase
-  .from("messages")
-  .update({
-    status: requestedStatus,
-    updated_at: new Date().toISOString(),
-  })
-  .eq("conversation_id", conversationId)
-  .in("id", messageIds)
-  .neq("sender_id", user.id)
-  .in(
-    "status",
-    requestedStatus === "delivered"
-      ? ["sent"]
-      : ["sent", "delivered"],
-  )
-  .select(
-    "id, conversation_id, sender_id, content, status, created_at, updated_at",
-  );
+    .from("messages")
+    .update({
+      status: requestedStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("conversation_id", conversationId)
+    .in("id", messageIds)
+    .neq("sender_id", user.id)
+    .in(
+      "status",
+      requestedStatus === "delivered"
+        ? ["sent"]
+        : ["sent", "delivered"],
+    )
+    .select(
+      "id, conversation_id, sender_id, content, status, created_at, updated_at",
+    );
+
+  if (error) {
+    console.error(
+      "Failed to update message status:",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to update message status",
+      },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+    data,
+  });
 
   /* ----------------------------------------------------------
    * 5. Handle database error
