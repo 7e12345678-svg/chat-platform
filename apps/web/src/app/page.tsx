@@ -875,39 +875,124 @@ useEffect(() => {
    * Backend PATCH for messages can be added later.
    * ========================================================== */
 
-  const handleEditMessage = (
+    /* ==========================================================
+   * EDIT MESSAGE
+   *
+   * PATCH /api/conversations/:conversationId/messages
+   *
+   * Only the message owner can edit the message.
+   * Backend validates ownership using the authenticated user.
+   * ========================================================== */
+
+  const handleEditMessage = async (
     messageId: string,
     text: string,
   ) => {
     const trimmedText = text.trim();
 
+    /**
+     * ----------------------------------------------------------
+     * 1. Validate edited text
+     * ----------------------------------------------------------
+     */
     if (!trimmedText) {
       return;
     }
 
-    setMessagesByConversation(
-      (currentMessages) => {
-        const currentConversationMessages =
-          currentMessages[
-            selectedConversationId
-          ] ?? [];
+    try {
+      /**
+       * --------------------------------------------------------
+       * 2. Update message in backend
+       * --------------------------------------------------------
+       */
+      const response = await fetch(
+        `/api/conversations/${selectedConversationId}/messages`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messageIds: [messageId],
+            content: trimmedText,
+          }),
+        },
+      );
 
-        return {
-          ...currentMessages,
+      /**
+       * --------------------------------------------------------
+       * 3. Handle API error
+       * --------------------------------------------------------
+       */
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => null);
 
-          [selectedConversationId]:
-            currentConversationMessages.map(
-              (message) =>
-                message.id === messageId
-                  ? {
-                      ...message,
-                      text: trimmedText,
-                    }
-                  : message,
-            ),
-        };
-      },
-    );
+        throw new Error(
+          errorData?.message ||
+            "Failed to edit message",
+        );
+      }
+
+      /**
+       * --------------------------------------------------------
+       * 4. Read updated message
+       * --------------------------------------------------------
+       */
+      const result = await response.json();
+
+      const updatedMessage = result.data?.[0] as
+        | {
+            id: string;
+            content: string;
+          }
+        | undefined;
+
+      if (!updatedMessage) {
+        throw new Error(
+          "Message was not updated",
+        );
+      }
+
+      /**
+       * --------------------------------------------------------
+       * 5. Update local UI
+       *
+       * Realtime UPDATE will also reach the other user.
+       * --------------------------------------------------------
+       */
+      setMessagesByConversation(
+        (currentMessages) => {
+          const currentConversationMessages =
+            currentMessages[
+              selectedConversationId
+            ] ?? [];
+
+          return {
+            ...currentMessages,
+
+            [selectedConversationId]:
+              currentConversationMessages.map(
+                (message) =>
+                  message.id ===
+                  updatedMessage.id
+                    ? {
+                        ...message,
+                        text:
+                          updatedMessage.content,
+                      }
+                    : message,
+              ),
+          };
+        },
+      );
+    } catch (error) {
+      console.error(
+        "Failed to edit message:",
+        error,
+      );
+    }
   };
 
   /* ==========================================================
