@@ -37,6 +37,12 @@ import {
   getRemotePresence,
 } from "@/lib/chat/presence-state";
 
+import {
+  getUndeliveredIncomingMessageIds,
+  markMessagesAsDelivered,
+} from "@/lib/chat/delivery-status";
+
+
 /* ============================================================
  * TYPES
  * ============================================================ */
@@ -143,59 +149,95 @@ export default function Home() {
     Message[]
   >>({});
 
-    /* ==========================================================
+      /* ==========================================================
    * REALTIME MESSAGES
    *
    * Subscribe to new messages for the selected conversation.
-   * Supabase Realtime DB row → Frontend Message → UI
+   *
+   * IMPORTANT:
+   * - Prevent async setup from creating a channel after cleanup.
+   * - Always cleanup the exact channel created by this effect.
    * ========================================================== */
 
   useEffect(() => {
+  let cancelled = false;
   let cleanupRealtime: (() => void) | null = null;
-  let disposed = false;
 
   const setupRealtimeMessages = async () => {
     const userId = await getCurrentUserId();
 
-    if (!userId) {
+    // The effect was already cleaned up.
+    if (!userId || cancelled) {
       return;
     }
 
+    const conversationId = selectedConversationId;
+
     const channel = subscribeToMessages(
-      selectedConversationId,
+      conversationId,
       (realtimeMessage) => {
+        // Ignore events after cleanup.
+        if (cancelled) {
+          return;
+        }
+
+        const rawMessage = realtimeMessage as {
+          id: string;
+          conversation_id: string;
+          sender_id: string;
+          content: string;
+          status:
+            | "sent"
+            | "delivered"
+            | "read";
+          created_at: string;
+        };
+
         const message = mapRealtimeMessage(
-          realtimeMessage as {
-            id: string;
-            conversation_id: string;
-            sender_id: string;
-            content: string;
-            status:
-              | "sent"
-              | "delivered"
-              | "read";
-            created_at: string;
-          },
+          rawMessage,
           userId,
         );
 
+        /**
+         * Mark incoming message as delivered.
+         */
+        const undeliveredMessageIds =
+  getUndeliveredIncomingMessageIds([
+    message,
+  ]);
+
+if (undeliveredMessageIds.length > 0) {
+  void markMessagesAsDelivered(
+    conversationId,
+    undeliveredMessageIds,
+  ).catch((error) => {
+    console.error(
+      "Failed to mark message as delivered:",
+      error,
+    );
+  });
+}
+
+        /**
+         * Add/update message in UI.
+         */
         setMessagesByConversation(
           (currentMessages) => ({
             ...currentMessages,
-
-            [selectedConversationId]:
-              upsertMessage(
-                currentMessages[
-                  selectedConversationId
-                ] ?? [],
-                message,
-              ),
+            [conversationId]: upsertMessage(
+              currentMessages[conversationId] ?? [],
+              message,
+            ),
           }),
         );
       },
     );
 
-    if (disposed) {
+    /**
+     * If cleanup happened while the async
+     * setup was running, immediately unsubscribe.
+     */
+    if (cancelled) {
       channel.unsubscribe();
       return;
     }
@@ -208,8 +250,10 @@ export default function Home() {
   void setupRealtimeMessages();
 
   return () => {
-    disposed = true;
+    cancelled = true;
+
     cleanupRealtime?.();
+    cleanupRealtime = null;
   };
 }, [selectedConversationId]);
 
@@ -611,33 +655,6 @@ if (loadedMessages) {
   };
 
   /* ==========================================================
-   * UPDATE MESSAGE STATUS
-   * ========================================================== */
-
-  const updateMessageStatus = (
-    conversationId: ConversationId,
-    messageId: string,
-    status: Message["status"],
-  ) => {
-    setMessagesByConversation(
-      (currentMessages) => ({
-        ...currentMessages,
-
-        [conversationId]: (
-          currentMessages[conversationId] ?? []
-        ).map((message) =>
-          message.id === messageId
-            ? {
-                ...message,
-                status,
-              }
-            : message,
-        ),
-      }),
-    );
-  };
-
-  /* ==========================================================
  * MARK CONVERSATION AS READ
  * ========================================================== */
 
@@ -843,83 +860,12 @@ useEffect(() => {
         },
       );
 
-      /* --------------------------------------------------------
-       * 7. Update preview immediately
-       *
-       * No additional API call is necessary because
-       * lastMessagePreviewByConversation is derived
-       * from local message state.
-       * -------------------------------------------------------- */
-
-      /* --------------------------------------------------------
-       * 8. Temporary delivered status
-       * -------------------------------------------------------- */
-
-      setTimeout(() => {
-        updateMessageStatus(
-          selectedConversationId,
-          newMessage.id,
-          "delivered",
-        );
-      }, 700);
-
     } catch (error) {
       console.error(
         "Failed to send message:",
         error,
       );
     }
-  };
-
-  /* ==========================================================
-   * INCOMING MESSAGE
-   *
-   * Local simulation for future realtime support.
-   * ========================================================== */
-
-  const handleIncomingMessage = (
-    conversationId: ConversationId,
-    message: Message,
-  ) => {
-    setMessagesByConversation(
-      (currentMessages) => ({
-        ...currentMessages,
-
-        [conversationId]: [
-          ...(currentMessages[
-            conversationId
-          ] ?? []),
-
-          message,
-        ],
-      }),
-    );
-
-    /* ----------------------------------------------------------
-     * Current conversation → no unread count
-     * ---------------------------------------------------------- */
-
-    if (
-      conversationId ===
-      selectedConversationId
-    ) {
-      return;
-    }
-
-    /* ----------------------------------------------------------
-     * Other conversation → increase unread
-     * ---------------------------------------------------------- */
-
-    setUnreadCounts(
-      (currentCounts) => ({
-        ...currentCounts,
-
-        [conversationId]:
-          (currentCounts[
-            conversationId
-          ] ?? 0) + 1,
-      }),
-    );
   };
 
   /* ==========================================================

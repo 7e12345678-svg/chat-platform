@@ -481,3 +481,71 @@ describe(
 
   expect(messageAfterPatch?.status).toBe("sent");
 });
+
+  it("marks a message as delivered", async () => {
+  const conversationId = "sopheak";
+  const testContent = `DELIVERED TDD message ${Date.now()}`;
+
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SECRET_KEY!,
+  );
+
+  const {
+    data: insertedMessage,
+    error: insertError,
+  } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: "other-user-id",
+      content: testContent,
+      status: "sent",
+    })
+    .select(
+      "id, conversation_id, sender_id, content, status",
+    )
+    .single();
+
+  expect(insertError).toBeNull();
+  expect(insertedMessage).not.toBeNull();
+  expect(insertedMessage?.status).toBe("sent");
+
+  const request = new Request(
+    `http://localhost:3000/api/conversations/${conversationId}/messages`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messageIds: [insertedMessage!.id],
+        status: "delivered",
+      }),
+    },
+  );
+
+  const response = await PATCH(request, {
+    params: Promise.resolve({
+      conversationId,
+    }),
+  });
+
+  expect(response.status).toBe(200);
+
+  const result = await response.json();
+
+  expect(result.success).toBe(true);
+
+  const {
+    data: updatedMessage,
+    error: readError,
+  } = await supabase
+    .from("messages")
+    .select("id, status")
+    .eq("id", insertedMessage!.id)
+    .single();
+
+  expect(readError).toBeNull();
+  expect(updatedMessage?.status).toBe("delivered");
+});

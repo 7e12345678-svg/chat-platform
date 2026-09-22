@@ -240,6 +240,11 @@ export async function PATCH(
     );
   }
 
+  const requestedStatus =
+  body.status === "delivered"
+    ? "delivered"
+    : "read";
+
   /* ----------------------------------------------------------
    * 4. Update messages in Supabase
    *
@@ -250,18 +255,23 @@ export async function PATCH(
   const supabase = createSupabaseAdminClient();
 
   const { data, error } = await supabase
-    .from("messages")
-    .update({
-      status: "read",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("conversation_id", conversationId)
-    .in("id", messageIds)
-    .neq("sender_id", user.id)
-    .in("status", ["sent", "delivered"])
-    .select(
-      "id, conversation_id, sender_id, content, status, created_at, updated_at",
-    );
+  .from("messages")
+  .update({
+    status: requestedStatus,
+    updated_at: new Date().toISOString(),
+  })
+  .eq("conversation_id", conversationId)
+  .in("id", messageIds)
+  .neq("sender_id", user.id)
+  .in(
+    "status",
+    requestedStatus === "delivered"
+      ? ["sent"]
+      : ["sent", "delivered"],
+  )
+  .select(
+    "id, conversation_id, sender_id, content, status, created_at, updated_at",
+  );
 
   /* ----------------------------------------------------------
    * 5. Handle database error
