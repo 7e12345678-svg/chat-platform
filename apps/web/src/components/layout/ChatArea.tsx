@@ -109,6 +109,8 @@ onDeleteMessage: (
   messageId: string,
 ) => void;
 
+onSelectFile?: (file: File) => void;
+
   /**
    * ផ្ញើស្ថានភាពកំពុងវាយទៅទំព័រមេ។
    */
@@ -327,6 +329,7 @@ export function ChatArea({
   onEditMessage,
   onDeleteMessage,
   onTypingChange,
+  onSelectFile,
   presence,
 }: ChatAreaProps) {
 
@@ -1723,6 +1726,7 @@ const hasInitializedMessages =
       <MessageComposer
   onSendMessage={handleComposerSendMessage}
   onTypingChange={onTypingChange}
+  onSelectFile={onSelectFile}
 />
 
 {/* ============================================================
