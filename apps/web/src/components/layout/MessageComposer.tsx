@@ -8,7 +8,6 @@ import {
   type KeyboardEvent,
 } from "react";
 
-
 /* ============================================================
  * TYPES
  * ============================================================ */
@@ -16,6 +15,7 @@ import {
 export interface MessageComposerProps {
   onSendMessage: (message: string) => void;
   onTypingChange?: (isTyping: boolean) => void;
+  onSelectFile?: (file: File) => void;
 }
 
 /* ============================================================
@@ -25,7 +25,61 @@ export interface MessageComposerProps {
 const MIN_TEXTAREA_HEIGHT = 44;
 const MAX_TEXTAREA_HEIGHT = 140;
 
-const emojis = ["😀", "😂", "😍", "👍", "❤️", "🎉", "🔥", "🙏"];
+const emojis = [
+  "😀",
+  "😂",
+  "😍",
+  "👍",
+  "❤️",
+  "🎉",
+  "🔥",
+  "🙏",
+  "🫢",
+  "😞",
+  "💋",
+  "🙁",
+  "😏",
+  "👀",
+  "👽",
+  "🥶",
+  "🤯",
+  "😱",
+  "😴",
+  "🤩",
+  "🫶🏻",
+  "🙀",
+  "😽",
+  "🫩",
+  "🙄",
+  "😯",
+  "🩷",
+  "🧡",
+  "💛",
+  "💚",
+  "🩵",
+  "💙",
+  "💜",
+  "🖤",
+  "🩶",
+  "🤍",
+  "🤎",
+  "💔",
+  "❤️‍🔥",
+  "❤️‍🩹",
+  "💞",
+  "💗",
+  "💖",
+  "😹",
+  "🥺",
+  "🌱",
+  "🌿",
+  "☘️",
+  "🍀",
+  "💧",
+  "🌨",
+  "⛈",
+  "🌏",
+];
 
 /* ============================================================
  * COMPONENT
@@ -34,6 +88,7 @@ const emojis = ["😀", "😂", "😍", "👍", "❤️", "🎉", "🔥", "🙏"
 export function MessageComposer({
   onSendMessage,
   onTypingChange,
+  onSelectFile,
 }: MessageComposerProps) {
   /* ----------------------------------------------------------
    * STATE
@@ -47,6 +102,12 @@ export function MessageComposer({
    * ---------------------------------------------------------- */
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   /* ----------------------------------------------------------
    * AUTO-GROW TEXTAREA
@@ -91,8 +152,31 @@ export function MessageComposer({
     setMessage("");
     setShowEmojiPicker(false);
 
+    // Clear the pending typing timer.
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+
     // Stop typing state.
     onTypingChange?.(false);
+  };
+
+  /* ----------------------------------------------------------
+   * FILE CHANGE
+   * ---------------------------------------------------------- */
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    onSelectFile?.(file);
+
+    // Reset input so the same file can be selected again.
+    event.target.value = "";
   };
 
   /* ----------------------------------------------------------
@@ -104,20 +188,33 @@ export function MessageComposer({
 
     setMessage(value);
 
-    // Tell parent whether the user is currently typing.
-    onTypingChange?.(value.trim().length > 0);
+    if (value.trim()) {
+      // User is typing.
+      onTypingChange?.(true);
+
+      // Reset the previous typing timer.
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Stop typing after 1500ms of inactivity.
+      typingTimeoutRef.current = setTimeout(() => {
+        onTypingChange?.(false);
+        typingTimeoutRef.current = null;
+      }, 1500);
+    } else {
+      // Empty input stops typing immediately.
+      onTypingChange?.(false);
+
+      // Cancel the existing timer.
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+    }
 
     resizeTextarea();
   };
-
-  // ============================================================
-// TYPING TIMER
-// Automatically stops the typing indicator after
-// the user has stopped typing for a short period.
-// ============================================================
-const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-  null,
-);
 
   /* ----------------------------------------------------------
    * KEYBOARD HANDLER
@@ -153,12 +250,21 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     resizeTextarea();
   }, [message]);
 
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   /* ==========================================================
    * RENDER
    * ========================================================== */
 
   return (
-    <div className="shrink-0 border-t border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-4">
+    <div className="shrink-0 border-t border-(--border) bg-(--surface) px-4 py-2.5 sm:px-4">
       <div className="flex items-end gap-2.5">
         {/* ----------------------------------------------------
          * ATTACHMENT BUTTON
@@ -168,6 +274,7 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
           type="button"
           aria-label="Attach file"
           title="Attach file"
+          onClick={() => fileInputRef.current?.click()}
           className="
             flex
             h-10
@@ -177,17 +284,25 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
             justify-center
             rounded-xl
             text-xl
-            text-[var(--text-secondary)]
+            text-(--text-secondary)
             transition-all
             duration-150
             hover:scale-105
-            hover:bg-[var(--surface-hover)]
-            hover:text-[var(--text-primary)]
+            hover:bg-(--surface-hover)
+            hover:text-(--text-primary)
             active:scale-95
           "
         >
           +
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          aria-label="Attach image"
+          className="sr-only"
+          onChange={handleFileChange}
+        />
 
         {/* ----------------------------------------------------
          * MESSAGE INPUT WRAPPER
@@ -201,14 +316,14 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
             items-end
             rounded-2xl
             border
-            border-[var(--border)]
-            bg-[var(--background)]
+            border-(--border)
+            bg-(--background)
             px-3
             py-2
             transition-colors
-            focus-within:border-[var(--primary)]
+            focus-within:border-(--primary)
             focus-within:ring-2
-            focus-within:ring-[var(--primary)]/10
+            focus-within:ring-(--primary)/10
           "
         >
           {/* --------------------------------------------------
@@ -218,50 +333,23 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
           <textarea
             ref={textareaRef}
             value={message}
-            onChange={(event) => {
-  const value = event.target.value;
-
-  setMessage(value);
-
-  // User is typing.
-  if (value.trim()) {
-    onTypingChange?.(true);
-
-    // Reset the previous timer.
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    // Stop typing indicator after 1.5 seconds.
-    typingTimeoutRef.current = setTimeout(() => {
-      onTypingChange?.(false);
-    }, 1500);
-  } else {
-    // Empty input → stop typing immediately.
-    onTypingChange?.(false);
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-  }
-}}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder="Type a message..."
             rows={1}
             aria-label="Message"
             className="
-              max-h-[140px]
-              min-h-[44px]
+              max-h-35
+              min-h-11
               w-full
               resize-none
               bg-transparent
               py-2
               text-[14px]
               leading-6
-              text-[var(--text-primary)]
+              text-(--text-primary)
               outline-none
-              placeholder:text-[var(--text-muted)]
+              placeholder:text-(--text-muted)
             "
           />
 
@@ -283,12 +371,12 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
                 justify-center
                 rounded-lg
                 text-lg
-                text-[var(--text-secondary)]
+                text-(--text-secondary)
                 transition-all
                 duration-150
                 hover:scale-105
-                hover:bg-[var(--surface-hover)]
-                hover:text-[var(--text-primary)]
+                hover:bg-(--surface-hover)
+                hover:text-(--text-primary)
                 active:scale-95
               "
             >
@@ -302,26 +390,28 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
             {showEmojiPicker && (
               <div
                 className="
-                  absolute
-                  bottom-11
-                  right-0
-                  z-50
-                  grid
-                  grid-cols-4
-                  gap-1
-                  rounded-xl
-                  border
-                  border-[var(--border)]
-                  bg-[var(--surface)]
-                  p-2
-                  shadow-xl
-                  animate-in
-                  fade-in
-                  zoom-in-95
-                  slide-in-from-bottom-2
-                  duration-150
+                absolute
+                bottom-11
+                right-0
+                z-50
+                grid
+                w-70
+                grid-cols-8
+                gap-1
+                rounded-xl
+                border
+                border-(--border)
+                bg-(--surface)
+                p-3
+                shadow-xl
+                animate-in
+                fade-in
+                zoom-in-95
+                slide-in-from-bottom-2
+                duration-150
                 "
               >
+
                 {emojis.map((emoji) => (
                   <button
                     key={emoji}
@@ -330,8 +420,8 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
                     aria-label={`Add ${emoji}`}
                     className="
                       flex
-                      h-9
-                      w-9
+                      h-8
+                      w-8
                       items-center
                       justify-center
                       rounded-lg
@@ -339,7 +429,7 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
                       transition-all 
                       duration-150
                       hover:scale-110
-                      hover:bg-[var(--surface-hover)]
+                      hover:bg-(--surface-hover)
                       active:scale-95
                     "
                   >
@@ -369,16 +459,16 @@ const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
             items-center
             justify-center
             rounded-xl
-            bg-[var(--primary)]
+            bg-(--primary)
             text-lg
             text-white
             transition-all
-duration-200
-hover:-translate-y-px
-hover:brightness-110
-hover:shadow-md
-active:translate-y-0
-active:scale-95
+            duration-200
+            hover:-translate-y-px
+            hover:brightness-110
+            hover:shadow-md
+            active:translate-y-0
+            active:scale-95
             disabled:cursor-not-allowed
             disabled:opacity-40
           "
@@ -391,7 +481,7 @@ active:scale-95
        * KEYBOARD HINT
        * ------------------------------------------------------ */}
 
-      <div className="mt-2.5 hidden px-1 text-xs text-[var(--text-muted)] sm:block">
+      <div className="mt-2.5 hidden px-1 text-xs text-(--text-muted) sm:block">
         Enter to send · Shift + Enter for new line
       </div>
     </div>
