@@ -130,7 +130,7 @@ describe("POST /api/conversations/[conversationId]/messages", () => {
       .delete()
       .eq("id", conversationId);
   }
-});
+  });
 
   it("saves a new message into Supabase", async () => {
     const testContent = `TDD message ${Date.now()}`;
@@ -235,8 +235,8 @@ describe("GET /api/conversations/[conversationId]/messages", () => {
         status: "sent",
       })
       .select(
-        "id, conversation_id, sender_id, content, status, created_at",
-      )
+  "id, conversation_id, sender_id, content, image_url, status, created_at",
+)
       .single();
 
     expect(insertError).toBeNull();
@@ -650,4 +650,156 @@ describe(
 
   expect(readError).toBeNull();
   expect(updatedMessage?.status).toBe("delivered");
+});
+
+   it("creates an image-only message", async () => {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SECRET_KEY!,
+  );
+
+  const conversationId = `image-message-${Date.now()}`;
+  const imagePath =
+    `test-user-id/${conversationId}/image.png`;
+
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
+  const supabaseSecretKey =
+    process.env.SUPABASE_SECRET_KEY!;
+
+  // ----------------------------------------------------------
+  // 1. Create test conversation
+  // ----------------------------------------------------------
+
+  const { error: conversationError } =
+    await supabase
+      .from("conversations")
+      .insert({
+        id: conversationId,
+        name: "Image Message Test",
+        fallback: "I",
+        online: false,
+      });
+
+  expect(conversationError).toBeNull();
+
+  try {
+    // --------------------------------------------------------
+    // 2. Upload a real PNG object to Supabase Storage
+    // --------------------------------------------------------
+
+    const pngBytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+
+    const uploadResponse = await fetch(
+      `${supabaseUrl}/storage/v1/object/message-images/${imagePath}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${supabaseSecretKey}`,
+          apikey: supabaseSecretKey,
+          "Content-Type": "image/png",
+          "x-upsert": "true",
+        },
+        body: pngBytes,
+      },
+    );
+
+    expect(uploadResponse.ok).toBe(true);
+
+    // --------------------------------------------------------
+    // 3. Create image-only message
+    // --------------------------------------------------------
+
+    const request = new Request(
+      `http://localhost:3000/api/conversations/${conversationId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          imagePath,
+        }),
+      },
+    );
+
+    const response = await POST(request, {
+      params: Promise.resolve({
+        conversationId,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+
+    // --------------------------------------------------------
+    // 4. Verify API response
+    // --------------------------------------------------------
+
+    const result = await response.json();
+
+    expect(result.success).toBe(true);
+
+    expect(result.data.imageUrl).toEqual(
+      expect.stringContaining(
+        "/storage/v1/object/sign/message-images/",
+      ),
+    );
+
+    // Image-only message has no text.
+    // API converts NULL content → ""
+    expect(result.data.text).toBe("");
+
+    // --------------------------------------------------------
+    // 5. Verify database
+    // --------------------------------------------------------
+
+    const { data, error } = await supabase
+      .from("messages")
+      .select(
+        "id, conversation_id, sender_id, content, image_url, status",
+      )
+      .eq("conversation_id", conversationId)
+      .eq("image_url", imagePath)
+      .maybeSingle();
+
+    expect(error).toBeNull();
+    expect(data).not.toBeNull();
+
+    expect(data?.conversation_id).toBe(
+      conversationId,
+    );
+
+    expect(data?.sender_id).toBe(
+      "test-user-id",
+    );
+
+    expect(data?.content).toBeNull();
+
+    expect(data?.image_url).toBe(
+      imagePath,
+    );
+
+    expect(data?.status).toBe("sent");
+  } finally {
+    // --------------------------------------------------------
+    // 6. Cleanup Storage object
+    // --------------------------------------------------------
+
+    await supabase.storage
+      .from("message-images")
+      .remove([imagePath]);
+
+    // --------------------------------------------------------
+    // 7. Cleanup test conversation
+    // --------------------------------------------------------
+
+    await supabase
+      .from("conversations")
+      .delete()
+      .eq("id", conversationId);
+  }
 });

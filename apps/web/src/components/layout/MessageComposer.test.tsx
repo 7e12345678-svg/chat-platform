@@ -10,6 +10,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { MessageComposer } from "./MessageComposer";
 
@@ -164,4 +165,70 @@ describe("MessageComposer", () => {
 
     expect(onSelectFile).toHaveBeenCalledWith(file);
   });
+
+  it("sends an image-only message", async () => {
+  const onSendMessage = vi.fn();
+  const onSelectFile = vi.fn();
+
+  render(
+    <MessageComposer
+      onSendMessage={onSendMessage}
+      onSelectFile={onSelectFile}
+    />,
+  );
+
+  const fileInput =
+    screen.getByLabelText("Attach image");
+
+  const file = new File(
+    ["image-data"],
+    "photo.png",
+    {
+      type: "image/png",
+    },
+  );
+
+  Object.defineProperty(
+    fileInput,
+    "files",
+    {
+      value: [file],
+      configurable: true,
+    },
+  );
+
+  /* --------------------------------------------------------
+   * Select image
+   * -------------------------------------------------------- */
+  fireEvent.change(fileInput);
+
+  expect(
+    onSelectFile,
+  ).toHaveBeenCalledWith(file);
+
+  /* --------------------------------------------------------
+   * Send image WITHOUT text
+   * -------------------------------------------------------- */
+
+  const sendButton =
+    screen.getByRole("button", {
+      name: /send/i,
+    });
+
+  expect(
+    (sendButton as HTMLButtonElement).disabled,
+  ).toBe(false);
+
+  fireEvent.click(sendButton);
+
+  await waitFor(() => {
+    expect(
+      onSendMessage,
+    ).toHaveBeenCalledWith(
+      "",
+      file,
+    );
+  });
+});
+
 });

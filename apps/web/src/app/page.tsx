@@ -42,7 +42,6 @@ import {
   markMessagesAsDelivered,
 } from "@/lib/chat/delivery-status";
 
-
 /* ============================================================
  * TYPES
  * ============================================================ */
@@ -175,7 +174,7 @@ export default function Home() {
 
     const channel = subscribeToMessages(
       conversationId,
-      (realtimeMessage) => {
+    async  (realtimeMessage) => {
         // Ignore events after cleanup.
         if (cancelled) {
           return;
@@ -185,18 +184,43 @@ export default function Home() {
           id: string;
           conversation_id: string;
           sender_id: string;
-          content: string;
-          status:
-            | "sent"
-            | "delivered"
-            | "read";
+          content: string | null;
+          image_url: string | null;
+          status: | "sent" | "delivered" | "read";
           created_at: string;
         };
 
-        const message = mapRealtimeMessage(
+        let message = mapRealtimeMessage(
           rawMessage,
           userId,
         );
+
+if (rawMessage.image_url) {
+  try {
+    const response = await fetch(
+      `/api/conversations/${conversationId}/messages`,
+    );
+
+    if (response.ok) {
+      const result = await response.json();
+
+      const savedMessage = (
+        result.data as Message[]
+      ).find(
+        (item) => item.id === rawMessage.id,
+      );
+
+      if (savedMessage) {
+        message = savedMessage;
+      }
+    }
+  } catch (error) {
+    console.error(
+      "Failed to hydrate realtime image message:",
+      error,
+    );
+  }
+}
 
         /**
          * Mark incoming message as delivered.
@@ -759,121 +783,200 @@ useEffect(() => {
 ]);
 
   /* ==========================================================
-   * SEND MESSAGE
-   *
-   * POST /api/conversations/:conversationId/messages
-   * ========================================================== */
+ * SEND MESSAGE
+ *
+ * Supports:
+ * - Text only
+ * - Image only
+ * - Text + image
+ * - Reply + image
+ * ========================================================== */
 
-  const handleSendMessage = async (
-    text: string,
-    replyTo?: Message["replyTo"],
-  ) => {
-    const trimmedText = text.trim();
+const handleSendMessage = async (
+  text: string,
+  replyTo?: Message["replyTo"],
+  file?: File,
+) => {
+  const trimmedText =
+    text.trim();
 
-    /* ----------------------------------------------------------
-     * 1. Validate
-     * ---------------------------------------------------------- */
+  /* --------------------------------------------------------
+   * 1. Prevent empty message.
+   * -------------------------------------------------------- */
 
-    if (!trimmedText) {
-      return;
+  if (
+    !trimmedText &&
+    !file
+  ) {
+    return;
+  }
+
+  try {
+    let imagePath = "";
+
+    /* ======================================================
+     * 2. UPLOAD IMAGE
+     * ====================================================== */
+
+    if (file) {
+      const formData =
+        new FormData();
+
+      formData.append(
+        "file",
+        file,
+      );
+
+      const uploadResponse =
+        await fetch(
+          `/api/conversations/${selectedConversationId}/image`,
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+      const uploadResult =
+        await uploadResponse
+          .json()
+          .catch(() => null);
+
+      if (!uploadResponse.ok) {
+        throw new Error(
+          uploadResult?.message ||
+            "Failed to upload image",
+        );
+      }
+
+      imagePath =
+        uploadResult?.data?.path ||
+        "";
+
+      if (!imagePath) {
+        throw new Error(
+          "Image upload did not return a path",
+        );
+      }
     }
 
-    try {
-      /* --------------------------------------------------------
-       * 2. POST message to backend
-       * -------------------------------------------------------- */
+    /* ======================================================
+     * 3. CREATE MESSAGE
+     * ====================================================== */
 
-      const response = await fetch(
+    const response =
+      await fetch(
         `/api/conversations/${selectedConversationId}/messages`,
         {
           method: "POST",
-
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
-
           body: JSON.stringify({
             text: trimmedText,
+            ...(imagePath
+              ? {
+                  imagePath,
+                }
+              : {}),
           }),
         },
       );
 
-      /* --------------------------------------------------------
-       * 3. Handle API error
-       * -------------------------------------------------------- */
+    /* ======================================================
+     * 4. HANDLE MESSAGE API ERROR
+     * ====================================================== */
 
-      if (!response.ok) {
-        const errorData =
-          await response
-            .json()
-            .catch(() => null);
+    if (!response.ok) {
+      const errorData =
+        await response
+          .json()
+          .catch(() => null);
 
-        throw new Error(
-          errorData?.message ||
-            "Failed to send message",
-        );
-      }
-
-      /* --------------------------------------------------------
-       * 4. Read saved message
-       * -------------------------------------------------------- */
-
-      const result =
-        await response.json();
-
-      const apiMessage =
-        result.data as Message;
-
-      /* --------------------------------------------------------
-       * 5. Keep reply reference
-       * -------------------------------------------------------- */
-
-      const newMessage: Message = {
-        ...apiMessage,
-
-        ...(replyTo
-          ? {
-              replyTo,
-            }
-          : {}),
-      };
-
-      /* --------------------------------------------------------
-       * 6. Add saved message to UI
-       * -------------------------------------------------------- */
-
-      setMessagesByConversation(
-        (currentMessages) => {
-          const currentConversationMessages =
-            currentMessages[
-              selectedConversationId
-            ] ?? [];
-
-          return {
-            ...currentMessages,
-
-            [selectedConversationId]: [
-              ...currentConversationMessages,
-              newMessage,
-            ],
-          };
-        },
-      );
-
-    } catch (error) {
-      console.error(
-        "Failed to send message:",
-        error,
+      throw new Error(
+        errorData?.message ||
+          "Failed to send message",
       );
     }
-  };
 
-  /* ==========================================================
-   * EDIT MESSAGE
-   *
-   * UI-only for now.
-   * Backend PATCH for messages can be added later.
-   * ========================================================== */
+    /* ======================================================
+     * 5. READ SAVED MESSAGE
+     * ====================================================== */
+
+    const result =
+      await response.json();
+
+    const apiMessage =
+      result.data as Message;
+
+    /* ======================================================
+     * 6. KEEP REPLY REFERENCE
+     * ====================================================== */
+
+    const newMessage: Message = {
+      ...apiMessage,
+
+      ...(replyTo
+        ? {
+            replyTo,
+          }
+        : {}),
+    };
+
+    /* ======================================================
+     * 7. UPDATE UI
+     * ====================================================== */
+
+    setMessagesByConversation(
+  (currentMessages) => {
+    const currentConversationMessages =
+      currentMessages[
+        selectedConversationId
+      ] ?? [];
+
+    return {
+      ...currentMessages,
+
+      [selectedConversationId]: upsertMessage(
+        currentConversationMessages,
+        newMessage,
+      ),
+    };
+  },
+);
+
+  } catch (error) {
+    console.error(
+      "Failed to send message:",
+      error,
+    );
+  }
+};
+
+
+/* ==========================================================
+ * SELECT IMAGE FILE
+ *
+ * Step 2:
+ * 1. Validate selected image
+ * 2. Upload image to Storage API
+ * 3. Create image-only message
+ * 4. Add saved message to UI
+ * ========================================================== */
+
+const handleSelectFile = (
+  file: File,
+) => {
+  console.log("Selected image:",
+    {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    },
+  );
+
+};
+
 
     /* ==========================================================
    * EDIT MESSAGE
@@ -1207,6 +1310,7 @@ useEffect(() => {
               onDeleteMessage={
                 handleDeleteMessage
               }
+              onSelectFile={handleSelectFile}
               onTypingChange={
                 handleTypingChange
               }
@@ -1258,6 +1362,7 @@ useEffect(() => {
               onDeleteMessage={
                 handleDeleteMessage
               }
+              onSelectFile={handleSelectFile}
               onTypingChange={
                 handleTypingChange
               }

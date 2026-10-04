@@ -8,6 +8,10 @@ import {
 
 import { Avatar } from "@/components/ui/Avatar";
 import { MessageComposer } from "@/components/layout/MessageComposer";
+import {
+  subscribeToMessages,
+  subscribeToReactions,
+} from "@/lib/chat/realtime";
 
 /* ============================================================
    TYPES
@@ -28,19 +32,12 @@ export interface Message {
   text: string;
   time: string;
 
-  /**
-   * ស្ថានភាពបញ្ជូនសារ។
-   *
-   * sent      → សារត្រូវបានផ្ញើ។
-   * delivered → សារបានដល់អ្នកទទួល។
-   * read      → អ្នកទទួលបានអានសារ។
-   */
+  imageUrl?: string | null;
+
   status?: "sent" | "delivered" | "read";
 
-  /**
-   * សារដែលសារនេះកំពុងឆ្លើយតប។
-   */
   replyTo?: MessageReply;
+  
 }
 
 // ============================================================
@@ -98,6 +95,7 @@ presence?: UserPresence;
  onSendMessage: (
   text: string,
   replyTo?: MessageReply,
+  file?:File,
 ) => void;
 
 onEditMessage: (
@@ -108,6 +106,8 @@ onEditMessage: (
 onDeleteMessage: (
   messageId: string,
 ) => void;
+
+onSelectFile?: (file: File) => void;
 
   /**
    * ផ្ញើស្ថានភាពកំពុងវាយទៅទំព័រមេ។
@@ -327,8 +327,42 @@ export function ChatArea({
   onEditMessage,
   onDeleteMessage,
   onTypingChange,
+  onSelectFile,
   presence,
 }: ChatAreaProps) {
+
+  const [selectedImageUrl, setSelectedImageUrl,] 
+        = useState<string | null>(null);
+
+        /* ==========================================================
+ * CLOSE IMAGE LIGHTBOX WITH ESC
+ * ========================================================== */
+
+useEffect(() => {
+  if (!selectedImageUrl) {
+    return;
+  }
+
+  const handleKeyDown = (
+    event: KeyboardEvent,
+  ) => {
+    if (event.key === "Escape") {
+      setSelectedImageUrl(null);
+    }
+  };
+
+  window.addEventListener(
+    "keydown",
+    handleKeyDown,
+  );
+
+  return () => {
+    window.removeEventListener(
+      "keydown",
+      handleKeyDown,
+    );
+  };
+}, [selectedImageUrl]);
 
   /* ==========================================================
  * ចាប់ផ្តើមកែសម្រួលសារ
@@ -452,35 +486,49 @@ const [reactions, setReactions] = useState<
   }, [messages]);
 
   /* ==========================================================
- * ផ្ញើសារពីឧបករណ៍សរសេរសារ
+ * SEND MESSAGE FROM COMPOSER
  *
- * បន្ថែមព័ត៌មានឆ្លើយតប ពេលអ្នកប្រើកំពុងឆ្លើយ
- * ទៅសារដែលមានស្រាប់។
+ * Supports:
+ * - Text
+ * - Image
+ * - Image + text
+ * - Reply + image
  * ========================================================== */
 
-const handleComposerSendMessage = (text: string) => {
-  const trimmedText = text.trim();
+const handleComposerSendMessage = (
+  text: string,
+  file?: File,
+) => {
+  const trimmedText =
+    text.trim();
 
-  if (!trimmedText) {
+  // Allow image-only messages.
+  if (
+    !trimmedText &&
+    !file
+  ) {
     return;
   }
 
-  const replyReference = replyingTo
-    ? {
-        id: replyingTo.id,
-        sender: replyingTo.sender,
-        text: replyingTo.text,
-      }
-    : undefined;
+  const replyReference =
+    replyingTo
+      ? {
+          id: replyingTo.id,
+          sender: replyingTo.sender,
+          text: replyingTo.text,
+        }
+      : undefined;
 
   onSendMessage(
     trimmedText,
     replyReference,
+    file,
   );
 
-  /**
-   * សម្អាតរបៀបឆ្លើយតបបន្ទាប់ពីផ្ញើ។
-   */
+  /* --------------------------------------------------------
+   * Clear reply mode.
+   * -------------------------------------------------------- */
+
   setReplyingTo(null);
 };
 
@@ -497,66 +545,208 @@ const quickReactions = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
  * ពេលក្រោយវានឹងហៅ Messages API។
  * ========================================================== */
 
-const handleReaction = (
+/* ==========================================================
+ * REACTION API
+ * ========================================================== */
+
+const getReactionsApiUrl = (
+  messageId: string,
+) =>
+  `/api/conversations/${encodeURIComponent(
+    conversationId,
+  )}/messages/${encodeURIComponent(
+    messageId,
+  )}/reactions`;
+
+/* ==========================================================
+ * LOAD REACTIONS
+ * ========================================================== */
+
+const loadMessageReactions = async (
+  messageId: string,
+) => {
+  try {
+    const response = await fetch(
+      getReactionsApiUrl(messageId),
+      {
+        method: "GET",
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      return;
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      return;
+    }
+
+    setReactions((current) => ({
+      ...current,
+      [messageId]: Array.isArray(result.data)
+        ? result.data
+        : [],
+    }));
+  } catch (error) {
+    console.error(
+      "Failed to load message reactions:",
+      error,
+    );
+  }
+};
+
+/* ==========================================================
+ * LOAD REACTIONS FOR CURRENT MESSAGES
+ * ========================================================== */
+
+/* ==========================================================
+ * LOAD ALL REACTIONS FOR CURRENT CONVERSATION
+ *
+ * Uses ONE API request for the whole conversation.
+ * ========================================================== */
+
+const loadConversationReactions = async () => {
+  try {
+    const response = await fetch(
+      `/api/conversations/${encodeURIComponent(
+        conversationId,
+      )}/reactions`,
+      {
+        method: "GET",
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      return;
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      return;
+    }
+
+    setReactions(
+      result.data &&
+        typeof result.data === "object"
+        ? result.data
+        : {},
+    );
+  } catch (error) {
+    console.error(
+      "Failed to load conversation reactions:",
+      error,
+    );
+  }
+};
+
+/* ==========================================================
+ * LOAD REACTIONS WHEN CONVERSATION / MESSAGE COUNT CHANGES
+ * ========================================================== */
+
+useEffect(() => {
+  if (!conversationId) {
+    return;
+  }
+
+  void loadConversationReactions();
+}, [conversationId, localMessages.length]);
+
+useEffect(() => {
+  if (!conversationId) {
+    return;
+  }
+
+  let cancelled = false;
+
+  const channel = subscribeToReactions(() => {
+    if (cancelled) {
+      return;
+    }
+    void loadConversationReactions();
+  });
+
+  return () => {
+    cancelled = true;
+    void channel.unsubscribe();
+  };
+  }, [conversationId]);
+
+/* ==========================================================
+ * TOGGLE REACTION
+ *
+ * If the current user already reacted:
+ *   DELETE
+ *
+ * Otherwise:
+ *   POST
+ * ========================================================== */
+
+const handleReaction = async (
   messageId: string,
   emoji: string,
 ) => {
-  setReactions((current) => {
-    const messageReactions = current[messageId] ?? [];
+  try {
+    const currentReactions =
+      reactions[messageId] ?? [];
 
-    const existingReaction = messageReactions.find(
-      (reaction) => reaction.emoji === emoji,
+    const existingReaction =
+      currentReactions.find(
+        (reaction) =>
+          reaction.emoji === emoji,
+      );
+
+    const alreadyReacted =
+      existingReaction?.reacted === true;
+
+    const response = await fetch(
+      getReactionsApiUrl(messageId),
+      {
+        method: alreadyReacted
+          ? "DELETE"
+          : "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          emoji,
+        }),
+      },
     );
 
-    if (!existingReaction) {
-      return {
-        ...current,
-        [messageId]: [
-          ...messageReactions,
-          {
-            emoji,
-            count: 1,
-            reacted: true,
-          },
-        ],
-      };
+    const result =
+      await response.json().catch(
+        () => null,
+      );
+
+    if (!response.ok) {
+      console.error(
+        "Reaction request failed:",
+        result,
+      );
+
+      return;
     }
 
-    if (existingReaction.reacted) {
-      const nextReactions = messageReactions
-        .map((reaction) =>
-          reaction.emoji === emoji
-            ? {
-                ...reaction,
-                count: reaction.count - 1,
-                reacted: false,
-              }
-            : reaction,
-        )
-        .filter((reaction) => reaction.count > 0);
-
-      return {
-        ...current,
-        [messageId]: nextReactions,
-      };
-    }
-
-    return {
-      ...current,
-      [messageId]: messageReactions.map((reaction) =>
-        reaction.emoji === emoji
-          ? {
-              ...reaction,
-              count: reaction.count + 1,
-              reacted: true,
-            }
-          : reaction,
-      ),
-    };
-  });
-
-  setActiveMessageId(null);
-  setReactionMessageId(null);
+    await loadMessageReactions(
+      messageId,
+    );
+  } catch (error) {
+    console.error(
+      "Failed to update reaction:",
+      error,
+    );
+  } finally {
+    setActiveMessageId(null);
+    setReactionMessageId(null);
+  }
 };
 
 
@@ -986,37 +1176,6 @@ const hasInitializedMessages =
  * is replying to.
  * ------------------------------------------------ */}
 
-{message.replyTo && (
-  <div
-    className="
-      mb-2
-      rounded-lg
-      border-l-2
-      border-[var(--primary)]
-      bg-black/10
-      px-2.5
-      py-1.5
-    "
-  >
-    <p className="text-[10px] font-medium opacity-80">
-      {message.replyTo.sender === "me"
-        ? "អ្នក"
-        : conversation.name}
-    </p>
-
-    <p className="mt-0.5 truncate text-xs opacity-70">
-      {message.replyTo.text}
-    </p>
-  </div>
-)}
-            {/* ------------------------------------------------
-             * MESSAGE TEXT
-             * ------------------------------------------------ */}
-
-            {/* ------------------------------------------------
- * MESSAGE CONTENT / EDIT MODE
- * ------------------------------------------------ */}
-
 {editingMessageId === message.id ? (
   <div className="min-w-[220px] space-y-2">
     <textarea
@@ -1095,12 +1254,44 @@ const hasInitializedMessages =
     </div>
   </div>
 ) : (
-  <p className="whitespace-pre-wrap break-words text-[14px] leading-6">
-    {message.text}
-  </p>
+  <>
+     
+     {message.imageUrl && (
+  <img
+    src={message.imageUrl}
+    alt="Shared image"
+    className="
+      mb-2
+      max-h-80
+      max-w-full
+      cursor-pointer
+      rounded-xl
+      object-cover
+      transition-transform
+      duration-150
+      hover:scale-[1.01]
+    "
+    loading="lazy"
+    onClick={() => {
+      setSelectedImageUrl(
+        message.imageUrl ?? null,
+      );
+    }}
+  />
 )}
 
-            {/* ------------------------------------------------
+    {/* ============================================================
+     * MESSAGE TEXT
+     * ============================================================ */}
+    {message.text && (
+      <p className="whitespace-pre-wrap break-words text-sm leading-5">
+        {message.text}
+      </p>
+    )}
+  </>
+)}
+
+ {/* ------------------------------------------------
  * MESSAGE REACTIONS
  *
  * Displays reactions that users added to this message.
@@ -1294,8 +1485,8 @@ const hasInitializedMessages =
       className={[
         "absolute bottom-9 z-50 w-36 origin-bottom",
         "rounded-xl border",
-        "border-[var(--border)]",
-        "bg-[var(--surface)]",
+        "border-(--border)",
+        "bg-(--surface)",
         "p-1 shadow-xl",
         "animate-in fade-in zoom-in-95 duration-150",
 
@@ -1326,10 +1517,10 @@ const hasInitializedMessages =
           py-2.5
           text-left
           text-xs
-          text-[var(--text-primary)]
+          text-(--text-primary)
           transition-all
           duration-150
-          hover:bg-[var(--surface-hover)]
+          hover:bg-(--surface-hover)
           hover:translate-x-px
         "
       >
@@ -1364,10 +1555,10 @@ const hasInitializedMessages =
           py-2.5
           text-left
           text-xs
-          text-[var(--text-primary)]
+          text-(--text-primary)
           transition-all
           duration-150
-          hover:bg-[var(--surface-hover)]
+          hover:bg-(--surface-hover)
           hover:translate-x-px
         "
       >
@@ -1398,9 +1589,9 @@ const hasInitializedMessages =
       py-2.5
       text-left
       text-xs
-      text-[var(--text-primary)]
+      text-(--text-primary)
       transition-colors
-      hover:bg-[var(--surface-hover)]
+      hover:bg-(--surface-hover)
     "
   >
     <span>✏️</span>
@@ -1450,10 +1641,10 @@ const hasInitializedMessages =
           py-2.5
           text-left
           text-xs
-          text-[var(--text-primary)]
+          text-(--text-primary)
           transition-all
           duration-150
-          hover:bg-[var(--surface-hover)]
+          hover:bg-(--surface-hover)
           hover:translate-x-px
         "
       >
@@ -1477,11 +1668,11 @@ const hasInitializedMessages =
   {reactionMessageId === message.id && (
     <div
       className={[
-        "absolute bottom-9 z-[60]",
+        "absolute bottom-9 z-60",
         "flex items-center gap-1",
         "rounded-xl border",
-        "border-[var(--border)]",
-        "bg-[var(--surface)]",
+        "border-(--border)",
+        "bg-(--surface)",
         "p-1.5 shadow-xl",
 
         isMine
@@ -1519,7 +1710,7 @@ const hasInitializedMessages =
             text-base
             transition-transform
             hover:scale-110
-            hover:bg-[var(--surface-hover)]
+            hover:bg-(--surface-hover)
             active:scale-95
           "
         >
@@ -1569,19 +1760,19 @@ const hasInitializedMessages =
       gap-2
       rounded-full
       border
-      border-[var(--border)]
-      bg-[var(--surface)]
+      border-(--border)
+      bg-(--surface)
       px-3
       text-xs
       font-medium
-      text-[var(--text-primary)]
+      text-(--text-primary)
       shadow-lg
       transition-all
       animate-in
       fade-in
       slide-in-from-bottom-2
       duration-200
-      hover:bg-[var(--surface-hover)]
+      hover:bg-(--surface-hover)
     "
   >
     <span>↓</span>
@@ -1619,13 +1810,13 @@ const hasInitializedMessages =
           gap-1.5
           rounded-2xl
           rounded-bl-md
-          bg-[var(--surface)]
+          bg-(--surface)
           px-4
           py-3
         "
       >
 
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-muted)]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-(--text-muted)" />
 
         <span
           className="
@@ -1633,7 +1824,7 @@ const hasInitializedMessages =
             w-1.5
             animate-bounce
             rounded-full
-            bg-[var(--text-muted)]
+            bg-(--text-muted)
             [animation-delay:100ms]
           "
         />
@@ -1644,7 +1835,7 @@ const hasInitializedMessages =
             w-1.5
             animate-bounce
             rounded-full
-            bg-[var(--text-muted)]
+            bg-(--text-muted)
             [animation-delay:200ms]
           "
         />
@@ -1671,22 +1862,22 @@ const hasInitializedMessages =
       className="
   shrink-0
   border-t
-  border-[var(--border)]
-  bg-[var(--surface)]
+  border-(--border)
+  bg-(--surface)
   px-4
   py-3
 "
   >
     <div className="flex items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-xs font-medium text-[var(--primary)]">
+        <p className="text-xs font-medium text-(--primary)">
           កំពុងឆ្លើយតបទៅកាន់{" "}
           {replyingTo.sender === "me"
             ? "ខ្លួនអ្នក"
             : conversation.name}
         </p>
 
-        <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
+        <p className="mt-0.5 truncate text-xs text-(--text-secondary)">
           {replyingTo.text}
         </p>
       </div>
@@ -1705,11 +1896,11 @@ const hasInitializedMessages =
   justify-center
   rounded-full
   text-sm
-  text-[var(--text-muted)]
+  text-(--text-muted)
   transition-all
   duration-150
-  hover:bg-[var(--surface-hover)]
-  hover:text-[var(--text-primary)]
+  hover:bg-(--surface-hover)
+  hover:text-(--text-primary)
   hover:scale-105
   active:scale-95
 "
@@ -1723,6 +1914,7 @@ const hasInitializedMessages =
       <MessageComposer
   onSendMessage={handleComposerSendMessage}
   onTypingChange={onTypingChange}
+  onSelectFile={onSelectFile}
 />
 
 {/* ============================================================
@@ -1730,7 +1922,7 @@ const hasInitializedMessages =
     បង្ហាញតែបន្ទាប់ពីអ្នកប្រើចុចលុប។
 ============================================================ */}
 {deletingMessageId && (
-  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 px-4">
+  <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 px-4">
     <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#171322] p-5 shadow-2xl">
       <h3 className="text-lg font-semibold text-white">
         លុបសារនេះមែនទេ?
@@ -1765,6 +1957,81 @@ const hasInitializedMessages =
         </button>
       </div>
     </div>
+  </div>
+)}
+
+  {/* ============================================================
+ * IMAGE LIGHTBOX
+ * ============================================================ */}
+
+{selectedImageUrl && (
+  <div
+    className="
+      fixed
+      inset-0
+      z-200
+      flex
+      items-center
+      justify-center
+      bg-black/80
+      p-4
+      backdrop-blur-sm
+    "
+    onClick={() => {
+      setSelectedImageUrl(null);
+    }}
+  >
+    {/* ========================================================
+     * CLOSE BUTTON
+     * ======================================================== */}
+
+    <button
+      type="button"
+      aria-label="Close image preview"
+      title="Close"
+      onClick={() => {
+        setSelectedImageUrl(null);
+      }}
+      className="
+        absolute
+        right-4
+        top-4
+        z-10
+        flex
+        h-10
+        w-10
+        items-center
+        justify-center
+        rounded-full
+        bg-black/60
+        text-2xl
+        text-white
+        transition
+        hover:bg-black/80
+        active:scale-95
+      "
+    >
+      ×
+    </button>
+
+    {/* ========================================================
+     * FULL IMAGE
+     * ======================================================== */}
+
+    <img
+      src={selectedImageUrl}
+      alt="Full size shared image"
+      className="
+        max-h-[90vh]
+        max-w-[95vw]
+        rounded-xl
+        object-contain
+        shadow-2xl
+      "
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    />
   </div>
 )}
 

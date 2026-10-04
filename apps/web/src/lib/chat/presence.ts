@@ -1,4 +1,5 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export async function getCurrentUserId() {
   const supabase = createSupabaseBrowserClient();
@@ -26,7 +27,7 @@ export function subscribeToPresence(
 const existingChannel = supabase
   .getChannels()
   .find(
-    (item) =>
+    (item: RealtimeChannel) =>
       item.topic ===
       `realtime:presence:${conversationId}`,
   );

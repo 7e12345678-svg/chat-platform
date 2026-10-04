@@ -113,10 +113,10 @@ if (!user) {
    * ascending = oldest → newest
    */
   const { data, error } = await supabase
-    .from("messages")
-    .select(
-      "id, conversation_id, sender_id, content, status, created_at",
-    )
+  .from("messages")
+  .select(
+    "id, conversation_id, sender_id, content, image_url, status, created_at",
+  )
     .eq("conversation_id", conversationId)
     .order("created_at", {
       ascending: true,
@@ -143,27 +143,73 @@ if (!user) {
   }
 
   /**
-   * ----------------------------------------------------------
-   * 4. Convert Database rows → Frontend Message format
-   * ----------------------------------------------------------
-   */
-  const messages = data.map((message) => ({
-    id: message.id,
-      sender: message.sender_id === user.id
-        ? ("me" as const)
-        : ("other" as const),
-    text: message.content,
-    time: new Date(
-      message.created_at,
-    ).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    }),
-    status: message.status as
-      | "sent"
-      | "delivered"
-      | "read",
-  }));
+ * ==========================================================
+ * CONVERT DATABASE MESSAGE → FRONTEND MESSAGE
+ * ==========================================================
+ *
+ * image_url from database is a storage path.
+ * Because message-images is private, create a signed URL
+ * before sending the message to the browser.
+ */
+const messages = await Promise.all(
+  data.map(async (message) => {
+    let imageUrl: string | null = null;
+
+    /* --------------------------------------------------------
+     * CREATE SIGNED IMAGE URL
+     * -------------------------------------------------------- */
+    if (message.image_url) {
+      const {
+        data: signedImage,
+        error: signedImageError,
+      } = await supabase.storage
+        .from("message-images")
+        .createSignedUrl(
+          message.image_url,
+          60 * 60,
+        );
+
+      if (signedImageError) {
+        console.error(
+          "Failed to create signed image URL:",
+          signedImageError,
+        );
+      } else {
+        imageUrl =
+          signedImage?.signedUrl ?? null;
+      }
+    }
+
+    return {
+      id: message.id,
+
+      sender:
+        message.sender_id === user.id
+          ? ("me" as const)
+          : ("other" as const),
+
+      /* ------------------------------------------------------
+       * Keep text compatible with current UI.
+       * Image-only messages have NULL content in database.
+       * ------------------------------------------------------ */
+      text: message.content ?? "",
+
+      imageUrl,
+
+      time: new Date(
+        message.created_at,
+      ).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+
+      status: message.status as
+        | "sent"
+        | "delivered"
+        | "read",
+    };
+  }),
+);
 
   /**
    * ----------------------------------------------------------
@@ -461,27 +507,27 @@ if (!conversation) {
    * 2. Read request body
    * ----------------------------------------------------------
    */
-  const body = await request.json();
+    const body = await request.json();
 
-  const text =
-    typeof body.text === "string"
-      ? body.text.trim()
-      : "";
+const text =
+  typeof body.text === "string"
+    ? body.text.trim()
+    : "";
 
-  /**
-   * ----------------------------------------------------------
-   * 3. Validate message text
-   * ----------------------------------------------------------
-   */
-  if (!text) {
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Message text is required",
-      },
-      { status: 400 },
-    );
-  }
+const imagePath =
+  typeof body.imagePath === "string"
+    ? body.imagePath.trim()
+    : "";
+
+if (!text && !imagePath) {
+  return NextResponse.json(
+    {
+      success: false,
+      message: "Message text or image is required",
+    },
+    { status: 400 },
+  );
+}
 
   /**
    * ----------------------------------------------------------
@@ -491,14 +537,15 @@ if (!conversation) {
   const { data, error } = await supabase
     .from("messages")
     .insert({
-      conversation_id: conversationId,
-      sender_id: user.id,
-      content: text,
-      status: "sent",
-    })
+  conversation_id: conversationId,
+  sender_id: user.id,
+  content: text || null,
+  image_url: imagePath || null,
+  status: "sent",
+})
     .select(
-      "id, conversation_id, sender_id, content, status, created_at",
-    )
+  "id, conversation_id, sender_id, content, image_url, status, created_at",
+)
     .single();
 
   /**
@@ -521,26 +568,63 @@ if (!conversation) {
     );
   }
 
-  /**
-   * ----------------------------------------------------------
-   * 7. Convert Database row → Frontend Message format
-   * ----------------------------------------------------------
-   */
-  const savedMessage = {
-    id: data.id,
-    sender: "me" as const,
-    text: data.content,
-    time: new Date(
-      data.created_at,
-    ).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    }),
-    status: data.status as
-      | "sent"
-      | "delivered"
-      | "read",
-  };
+/* ==========================================================
+ * CREATE SIGNED IMAGE URL
+ *
+ * image_url in database contains only the Storage path.
+ * Convert it to a temporary signed URL before returning
+ * the message to the browser.
+ * ========================================================== */
+
+let imageUrl: string | null = null;
+
+if (data.image_url) {
+  const {
+    data: signedImage,
+    error: signedImageError,
+  } = await supabase.storage
+    .from("message-images")
+    .createSignedUrl(
+      data.image_url,
+      60 * 60,
+    );
+
+  if (signedImageError) {
+    console.error(
+      "Failed to create signed image URL:",
+      signedImageError,
+    );
+  } else {
+    imageUrl =
+      signedImage?.signedUrl ?? null;
+  }
+}
+
+/* ==========================================================
+ * CONVERT DATABASE MESSAGE → FRONTEND MESSAGE
+ * ========================================================== */
+
+const savedMessage = {
+  id: data.id,
+
+  sender: "me" as const,
+
+  text: data.content ?? "",
+
+  imageUrl,
+
+  time: new Date(
+    data.created_at,
+  ).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }),
+
+  status: data.status as
+    | "sent"
+    | "delivered"
+    | "read",
+};
 
   /**
    * ----------------------------------------------------------
