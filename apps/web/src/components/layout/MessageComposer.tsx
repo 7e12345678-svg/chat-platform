@@ -13,9 +13,16 @@ import {
  * ============================================================ */
 
 export interface MessageComposerProps {
-  onSendMessage: (message: string) => void;
-  onTypingChange?: (isTyping: boolean) => void;
-  onSelectFile?: (file: File) => void;
+  onSendMessage: (
+    message: string,
+    file?: File,
+  ) => void;
+  onTypingChange?: (
+    isTyping: boolean,
+  ) => void;
+  onSelectFile?: (
+    file: File,
+  ) => void;
 }
 
 /* ============================================================
@@ -96,7 +103,9 @@ export function MessageComposer({
 
   const [message, setMessage] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
   /* ----------------------------------------------------------
    * REFS
    * ---------------------------------------------------------- */
@@ -137,47 +146,155 @@ export function MessageComposer({
    * SEND MESSAGE
    * ---------------------------------------------------------- */
 
-  const handleSend = () => {
-    const trimmedMessage = message.trim();
+  /* ==========================================================
+ * SEND MESSAGE
+ *
+ * Supports:
+ * - Text message
+ * - Image message
+ * - Image + text
+ * ========================================================== */
 
-    // Prevent empty messages.
-    if (!trimmedMessage) {
-      return;
-    }
+const handleSend = () => {
+  const trimmedMessage =
+    message.trim();
 
-    // Send message to parent component.
-    onSendMessage(trimmedMessage);
+  // Prevent sending when both text and image are empty.
+  if (
+    !trimmedMessage &&
+    !selectedFile
+  ) {
+    return;
+  }
 
-    // Reset composer after sending.
-    setMessage("");
-    setShowEmojiPicker(false);
+  /* --------------------------------------------------------
+   * Send text + selected image to parent.
+   * -------------------------------------------------------- */
 
-    // Clear the pending typing timer.
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
+  onSendMessage(
+    trimmedMessage,
+    selectedFile ?? undefined,
+  );
 
-    // Stop typing state.
-    onTypingChange?.(false);
-  };
+  /* --------------------------------------------------------
+   * Reset text.
+   * -------------------------------------------------------- */
 
-  /* ----------------------------------------------------------
-   * FILE CHANGE
-   * ---------------------------------------------------------- */
+  setMessage("");
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  /* --------------------------------------------------------
+   * Reset image preview.
+   * -------------------------------------------------------- */
 
-    if (!file) {
-      return;
-    }
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+  }
 
-    onSelectFile?.(file);
+  setSelectedFile(null);
+  setPreviewUrl(null);
 
-    // Reset input so the same file can be selected again.
+  setShowEmojiPicker(false);
+
+  /* --------------------------------------------------------
+   * Stop typing indicator.
+   * -------------------------------------------------------- */
+
+  if (typingTimeoutRef.current) {
+    clearTimeout(
+      typingTimeoutRef.current,
+    );
+
+    typingTimeoutRef.current = null;
+  }
+
+  onTypingChange?.(false);
+};
+
+  /* ==========================================================
+ * SELECT IMAGE
+ *
+ * IMPORTANT:
+ * Do NOT upload here.
+ * Only create a local preview.
+ * Upload happens when user presses Send.
+ * ========================================================== */
+
+const handleFileChange = (
+  event: ChangeEvent<HTMLInputElement>,
+) => {
+  const file =
+    event.target.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  /* --------------------------------------------------------
+   * Validate file type.
+   * -------------------------------------------------------- */
+
+  const allowedTypes = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+  ]);
+
+  if (!allowedTypes.has(file.type)) {
+    alert(
+      "Please select a JPG, PNG, WEBP, or GIF image.",
+    );
+
     event.target.value = "";
-  };
+    return;
+  }
+
+  /* --------------------------------------------------------
+   * Validate file size.
+   * Backend limit = 5MB.
+   * -------------------------------------------------------- */
+
+  if (file.size > 5 * 1024 * 1024) {
+    alert(
+      "Image must be smaller than 5MB.",
+    );
+
+    event.target.value = "";
+    return;
+  }
+
+  /* --------------------------------------------------------
+   * Remove previous preview URL.
+   * -------------------------------------------------------- */
+
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+  }
+
+  /* --------------------------------------------------------
+   * Create local preview URL.
+   * -------------------------------------------------------- */
+
+  const nextPreviewUrl =
+    URL.createObjectURL(file);
+
+  setSelectedFile(file);
+  setPreviewUrl(nextPreviewUrl);
+
+  /* --------------------------------------------------------
+   * Keep existing callback.
+   *
+   * Parent should ONLY observe/log the file here.
+   * It must NOT upload it.
+   * -------------------------------------------------------- */
+
+  onSelectFile?.(file);
+
+  // Allow selecting the same file again.
+  event.target.value = "";
+};
+
+  
 
   /* ----------------------------------------------------------
    * INPUT CHANGE
@@ -260,12 +377,102 @@ export function MessageComposer({
   }, []);
 
   /* ==========================================================
+ * CLEANUP IMAGE PREVIEW URL
+ * ========================================================== */
+
+useEffect(() => {
+  return () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  };
+}, [previewUrl]);
+
+  /* ==========================================================
    * RENDER
    * ========================================================== */
 
   return (
     <div className="shrink-0 border-t border-(--border) bg-(--surface) px-4 py-2.5 sm:px-4">
-      <div className="flex items-end gap-2.5">
+      <div className="flex flex-col">
+
+        {/* ============================================================
+ * IMAGE PREVIEW
+ * ============================================================ */}
+
+{selectedFile && previewUrl && (
+  <div className="flex items-end gap-2.5">
+    <div
+      className="
+        relative
+        w-fit
+        overflow-hidden
+        rounded-2xl
+        border
+        border-[var(--border)]
+        bg-[var(--background)]
+        p-1
+        shadow-sm
+      "
+    >
+      <img
+        src={previewUrl}
+        alt="Image preview"
+        className="
+          h-28
+          w-28
+          rounded-xl
+          object-cover
+          sm:h-32
+          sm:w-32
+        "
+      />
+
+      {/* ------------------------------------------------------
+       * REMOVE PREVIEW
+       * ------------------------------------------------------ */}
+
+      <button
+        type="button"
+        onClick={() => {
+          if (previewUrl) {
+            URL.revokeObjectURL(
+              previewUrl,
+            );
+          }
+
+          setSelectedFile(null);
+          setPreviewUrl(null);
+        }}
+        aria-label="Remove image"
+        title="Remove image"
+        className="
+          absolute
+          right-2
+          top-2
+          flex
+          h-7
+          w-7
+          items-center
+          justify-center
+          rounded-full
+          bg-black/70
+          text-sm
+          text-white
+          transition
+          hover:bg-black/90
+        "
+      >
+        ×
+      </button>
+    </div>
+
+    <p className="mt-1.5 max-w-40 truncate text-[10px] text-[var(--text-muted)]">
+      {selectedFile.name}
+    </p>
+  </div>
+)}
+
         {/* ----------------------------------------------------
          * ATTACHMENT BUTTON
          * ---------------------------------------------------- */}
@@ -448,7 +655,9 @@ export function MessageComposer({
         <button
           type="button"
           onClick={handleSend}
-          disabled={!message.trim()}
+          disabled={
+            isSending ||
+            (!message.trim() && !selectedFile)}
           aria-label="Send message"
           title="Send message"
           className="

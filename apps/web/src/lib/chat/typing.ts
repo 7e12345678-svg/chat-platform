@@ -36,15 +36,18 @@ export function subscribeToTyping(
   channel.on(
   "broadcast",
   { event: "typing" },
-  (payload) => {
-    const typingPayload = payload.payload as TypingPayload;
+  (payload: { payload: unknown }) => {
+    const typingPayload =
+      payload.payload as TypingPayload;
 
     // Ignore typing events sent by the current user.
     if (typingPayload.userId === userId) {
       return;
     }
 
-    onTyping(Boolean(typingPayload.isTyping));
+    onTyping(
+      Boolean(typingPayload.isTyping),
+    );
   },
 );
 

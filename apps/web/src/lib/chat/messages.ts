@@ -4,7 +4,8 @@ interface RealtimeMessage {
   id: string;
   conversation_id: string;
   sender_id: string;
-  content: string;
+  content: string | null;
+  image_url?: string | null;
   status: "sent" | "delivered" | "read";
   created_at: string;
 }
@@ -43,7 +44,6 @@ export function mapRealtimeMessage(
 ): Message {
   return {
     id: message.id,
-
     sender:
       message.sender_id === "me" ||
       (
@@ -53,7 +53,7 @@ export function mapRealtimeMessage(
         ? "me"
         : "other",
 
-    text: message.content,
+    text: message.content ?? "",
 
     time: new Date(
       message.created_at,
